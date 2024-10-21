@@ -155,6 +155,9 @@ void ValidationLayersDebugCallback(D3D12_MESSAGE_CATEGORY _category,
 }
 #endif
 
+// VkQueue -> ID3D12CommandQueue
+MComPtr<ID3D12CommandQueue> graphicsQueue;
+
 int main()
 {
 	// Initialization
@@ -249,6 +252,29 @@ int main()
 					}
 				}
 #endif
+
+				// Queue
+				{
+					// This renderer example only use 1 graphics queue.
+
+					// GFX
+					{
+						D3D12_COMMAND_QUEUE_DESC desc{
+							.Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
+							.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE,
+						};
+
+						/**
+						* DX12 can create queue 'on the fly' after device creation.
+						* No need to specify in advance how many queues will be used by the device object.
+						*/
+						device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
+						if (!graphicsQueue)
+						{
+							SA_LOG(L"Create Graphics Queue failed!", Error, DX12);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -277,6 +303,14 @@ int main()
 		{
 			// Device
 			{
+				// Queue
+				{
+					// GFX
+					{
+						graphicsQueue = nullptr;
+					}
+				}
+
 #if SA_DEBUG
 				// Validation Layers
 				if (VLayerCallbackCookie)
