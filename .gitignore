@@ -1,0 +1,35 @@
+# Visual Studio cache.
+.vs/
+
+
+# Vim cache.
+*.swp
+
+
+# CMake cache.
+out/
+CMakeFiles/
+CMakeCache.txt
+Makefile
+
+# Build and Temp files.
+[Bb]uild/
+[Bb]uilds/
+[Ii]nstall/
+
+[Bb]in/
+
+[Tt]emp/
+[Tt]emps/
+[Tt]emporary/
+
+*.tmp
+
+
+# Log files
+[Ll]ogs/
+
+
+# Documentation generated files
+html/
+latex/
