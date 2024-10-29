@@ -19,7 +19,7 @@ target_compile_features(FromVulkanToDirectX12 PUBLIC cxx_std_20)
 
 # Link libraries
 target_link_libraries(FromVulkanToDirectX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib)
-target_link_libraries(FromVulkanToDirectX12 PUBLIC glfw SA_Logger SA_Maths)
+target_link_libraries(FromVulkanToDirectX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
 
 
 # ThirdParty
@@ -29,6 +29,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable assimp built as shared libraries")
 set(ASSIMP_INSTALL OFF CACHE BOOL "Disable assimp install")
 set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Disable assimp build tests")
 add_subdirectory(ThirdParty/assimp)
+
+add_subdirectory(ThirdParty/stb)
 
 
 ## SA libraries
