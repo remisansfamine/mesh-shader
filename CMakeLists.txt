@@ -25,6 +25,12 @@ target_link_libraries(FromVulkanToDirectX12 PUBLIC glfw SA_Logger SA_Maths)
 # ThirdParty
 add_subdirectory(ThirdParty/glfw)
 
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable assimp built as shared libraries")
+set(ASSIMP_INSTALL OFF CACHE BOOL "Disable assimp install")
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "Disable assimp build tests")
+add_subdirectory(ThirdParty/assimp)
+
+
 ## SA libraries
 add_subdirectory(ThirdParty/SA/Logger)
 add_subdirectory(ThirdParty/SA/Maths)

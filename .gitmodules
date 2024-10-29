@@ -7,3 +7,6 @@
 [submodule "ThirdParty/SA/Maths"]
 	path = ThirdParty/SA/Maths
 	url = https://github.com/SapphireSuite/Maths.git
+[submodule "ThirdParty/assimp"]
+	path = ThirdParty/assimp
+	url = https://github.com/assimp/assimp
