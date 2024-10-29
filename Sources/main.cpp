@@ -1,3 +1,5 @@
+#include <array>
+
 /**
 * Sapphire Suite Debugger:
 * Maxime's custom Log and Assert macros for easy debug.
@@ -22,6 +24,9 @@ void GLFWErrorCallback(int32_t error, const char* description)
 }
 
 
+// Renderer
+constexpr uint32_t bufferingCount = 3;
+
 /**
 * Vulkan is a C library: objects are passed as function arguments.
 * pseudo-code:
@@ -35,9 +40,9 @@ void GLFWErrorCallback(int32_t error, const char* description)
 * DirectX12 is a C++ object oriented API: functions are called directly from the object.
 * pseudo-code:
 * ID3D12PipelineState* myPipeline;
-* _device->CreateGraphicsPipelineState(&createInfo, myPipeline);
+* device->CreateGraphicsPipelineState(&createInfo, myPipeline);
 * ...
-* _cmdList->SetPipelineState(myPipeline)
+* cmdList->SetPipelineState(myPipeline)
 * ...
 * myPipeline = nullptr; // WARNING: Memory leak.
 * 
@@ -52,7 +57,6 @@ using MComPtr = Microsoft::WRL::ComPtr<T>;
 
 /**
 * Header specific to create a Factory (required to create a Device).
-* VkInstance -> DX12 Factory
 */
 #include <dxgi1_6.h>
 // VkInstance -> IDXGIFactory
@@ -158,6 +162,18 @@ void ValidationLayersDebugCallback(D3D12_MESSAGE_CATEGORY _category,
 // VkQueue -> ID3D12CommandQueue
 MComPtr<ID3D12CommandQueue> graphicsQueue;
 
+// VkSwapchainKHR -> IDXGISwapChain
+MComPtr<IDXGISwapChain3> swapchain;
+// VkImage -> ID3D12Resource
+std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages;
+/**
+* Vulkan uses Semaphores and Fences for swapchain synchronization
+* DirectX12 uses fence and Windows event.
+*/
+HANDLE swapchainFenceEvent;
+MComPtr<ID3D12Fence> swapchainFence;
+uint32_t swapchainFenceValue = 0;
+
 int main()
 {
 	// Initialization
@@ -171,6 +187,12 @@ int main()
 
 			glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 			window = glfwCreateWindow(windowSize.x, windowSize.y, "From Vulkan to DirectX12", nullptr, nullptr);
+
+			if (!window)
+			{
+				SA_LOG(L"GLFW create window failed!", Error, GLFW);
+				return 1;
+			}
 
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		}
@@ -186,7 +208,8 @@ int main()
 				{
 					MComPtr<ID3D12Debug1> debugController = nullptr;
 
-					if (D3D12GetDebugInterface(IID_PPV_ARGS(&debugController)) == S_OK)
+					const HRESULT hDebugInterface = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
+					if (SUCCEEDED(hDebugInterface))
 					{
 						debugController->EnableDebugLayer();
 						debugController->SetEnableGPUBasedValidation(true);
@@ -200,9 +223,8 @@ int main()
 				// Enable additional debug layers.
 				dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
 #endif
-
-				CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
-				if (!factory)
+				const HRESULT hFactoryCreated = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
+				if (FAILED(hFactoryCreated))
 				{
 					SA_LOG(L"Create Factory failed!", Error, DX12);
 					return 1;
@@ -214,15 +236,15 @@ int main()
 				MComPtr<IDXGIAdapter3> physicalDevice;
 
 				// Select first prefered GPU, listed by HIGH_PERFORMANCE. No need to manually sort GPU like Vulkan.
-				factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&physicalDevice));
-				if (!physicalDevice)
+				const HRESULT hQueryGPU = factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&physicalDevice));
+				if (FAILED(hQueryGPU))
 				{
 					SA_LOG(L"Physical Device not found!", Error, DX12);
 					return 0;
 				}
 
-				D3D12CreateDevice(physicalDevice.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
-				if (!device)
+				const HRESULT hDeviceCreated = D3D12CreateDevice(physicalDevice.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
+				if (FAILED(hDeviceCreated))
 				{
 					SA_LOG(L"Create Device failed!", Error, DX12);
 					return 0;
@@ -233,7 +255,8 @@ int main()
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
 
-					if (device->QueryInterface(IID_PPV_ARGS(&infoQueue)) == S_OK)
+					const HRESULT hQueryInfoQueue = device->QueryInterface(IID_PPV_ARGS(&infoQueue));
+					if (SUCCEEDED(hQueryInfoQueue))
 					{
 						/**
 						* Cookie must be provided to properly register message callback (and unregister later).
@@ -268,11 +291,72 @@ int main()
 						* DX12 can create queue 'on the fly' after device creation.
 						* No need to specify in advance how many queues will be used by the device object.
 						*/
-						device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
-						if (!graphicsQueue)
+						const HRESULT hCmdQueueCreated = device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
+						if (FAILED(hCmdQueueCreated))
 						{
 							SA_LOG(L"Create Graphics Queue failed!", Error, DX12);
+							return 1;
 						}
+					}
+				}
+			}
+
+			// Swapchain
+			{
+				DXGI_SWAP_CHAIN_DESC1 desc{
+					.Width = windowSize.x,
+					.Height = windowSize.y,
+					.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+					.Stereo = false,
+					.SampleDesc = {.Count = 1, .Quality = 0 },
+					.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+					.BufferCount = bufferingCount,
+					.Scaling = DXGI_SCALING_STRETCH,
+					.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
+					.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED,
+					.Flags = 0,
+				};
+
+				MComPtr<IDXGISwapChain1> swapchain1;
+				const HRESULT hSwapChainCreated = factory->CreateSwapChainForHwnd(graphicsQueue.Get(), glfwGetWin32Window(window), &desc, nullptr, nullptr, &swapchain1);
+				if (FAILED(hSwapChainCreated))
+				{
+					SA_LOG(L"Create Swapchain failed!", Error, DX12);
+					return 1;
+				}
+
+				const HRESULT hSwapChainCast = swapchain1.As(&swapchain);
+				if (FAILED(hSwapChainCast))
+				{
+					SA_LOG(L"Swapchain cast failed!", Error, DX12);
+					return 1;
+				}
+
+				// Synchronization
+				{
+					swapchainFenceEvent = CreateEvent(nullptr, false, false, nullptr);
+					if (!swapchainFenceEvent)
+					{
+						SA_LOG(L"Create Swapchain Fence Event failed!", Error, DX12);
+						return 1;
+					}
+
+					const HRESULT hSwapChainFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapchainFence));
+					if (FAILED(hSwapChainFenceCreated))
+					{
+						SA_LOG(L"Create Swapchain Fence failed!", Error, DX12);
+						return 1;
+					}
+				}
+
+				// Query back-buffers
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					const HRESULT hSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
+					if (hSwapChainGetBuffer)
+					{
+						SA_LOG(L"Get Swapchain Buffer failed!", Error, DX12);
+						return 1;
 					}
 				}
 			}
@@ -301,6 +385,13 @@ int main()
 	{
 		// Renderer
 		{
+			// Swapchain
+			{
+				CloseHandle(swapchainFenceEvent);
+				swapchainFence = nullptr;
+				swapchain = nullptr;
+			}
+
 			// Device
 			{
 				// Queue
