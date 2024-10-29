@@ -174,6 +174,18 @@ HANDLE swapchainFenceEvent;
 MComPtr<ID3D12Fence> swapchainFence;
 uint32_t swapchainFenceValue = 0;
 
+/**
+* VkCommandPool -> ID3D12CommandAllocator
+* Like for Vulkan, it is better to create 1 command allocator (pool) per frame.
+*/
+std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
+/**
+* VkCommandBuffer -> ID3D12CommandList
+* /!\ with DirectX12, for graphics operations, the 'CommandList' type is not enough. ID3D12GraphicsCommandList must be used.
+* Like for Vulkan, we allocate 1 command buffer per frame (using the current frame command allocator (pool)).
+*/
+std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists;
+
 int main()
 {
 	// Initialization
@@ -231,6 +243,7 @@ int main()
 				}
 			}
 			
+
 			// Device
 			{
 				MComPtr<IDXGIAdapter3> physicalDevice;
@@ -301,6 +314,7 @@ int main()
 				}
 			}
 
+
 			// Swapchain
 			{
 				DXGI_SWAP_CHAIN_DESC1 desc{
@@ -355,9 +369,33 @@ int main()
 					const HRESULT hSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
 					if (hSwapChainGetBuffer)
 					{
-						SA_LOG(L"Get Swapchain Buffer failed!", Error, DX12);
+						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12);
 						return 1;
 					}
+				}
+			}
+
+
+			// Commands
+			{
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					const HRESULT hCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAllocs[i]));
+					if (FAILED(hCmdAllocCreated))
+					{
+						SA_LOG((L"Create Command Allocator [%1] failed!", i), Error, DX12);
+						return 1;
+					}
+
+					const HRESULT hCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAllocs[i].Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
+					if (FAILED(hCmdListCreated))
+					{
+						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12);
+						return 1;
+					}
+
+					// Command list must be closed because we will start the frame by Reset()
+					cmdLists[i]->Close();
 				}
 			}
 		}
@@ -385,12 +423,20 @@ int main()
 	{
 		// Renderer
 		{
+			// Commands
+			{
+				cmdLists.fill(nullptr);
+				cmdAllocs.fill(nullptr);
+			}
+
+
 			// Swapchain
 			{
 				CloseHandle(swapchainFenceEvent);
 				swapchainFence = nullptr;
 				swapchain = nullptr;
 			}
+
 
 			// Device
 			{
