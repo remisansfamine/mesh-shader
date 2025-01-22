@@ -11,6 +11,7 @@
 * Maxime's custom Maths library.
 */
 #include <SA/Collections/Maths>
+#include <SA/Collections/Transform>
 
 
 // Resource Loading
@@ -294,6 +295,28 @@ MComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
 MComPtr<ID3D12Resource> rustedIron2NormalTexture;
 MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
 MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
+
+// Camera Buffer.
+struct CameraUBO
+{
+	SA::Mat4f view;
+	SA::Mat4f invViewProj;
+};
+SA::TransformPRf cameraTr;
+constexpr float cameraMoveSpeed = 4.0f;
+constexpr float cameraRotSpeed = 16.0f;
+constexpr float cameraNear = 0.1f;
+constexpr float cameraFar = 1000.0f;
+constexpr float cameraFOV = 90.0f;
+std::array<MComPtr<ID3D12Resource>, bufferingCount> cameraBuffers;
+
+// Object Buffer.
+struct ObjectUBO
+{
+	SA::Mat4f transform;
+};
+constexpr SA::Vec3f spherePosition(0.5f, 0.0f, 2.0f);
+MComPtr<ID3D12Resource> objectBuffer;
 
 
 // -------------------- Helper Functions --------------------
@@ -895,7 +918,7 @@ int main()
 						};
 
 						const D3D12_ROOT_PARAMETER1 params[]{
-							// Object Constant buffer
+							// Camera Constant buffer
 							{
 								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
 								.Descriptor = {
@@ -905,7 +928,7 @@ int main()
 								},
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
 							},
-							// Camera Constant buffer
+							// Object Constant buffer
 							{
 								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
 								.Descriptor = {
@@ -1190,7 +1213,7 @@ int main()
 			}
 
 
-			// Loaded Resources
+			// Resources
 			{
 				cmdLists[0]->Reset(cmdAllocs[0].Get(), nullptr);
 
@@ -1632,6 +1655,74 @@ int main()
 					}
 				}
 
+
+				// Camera Buffers
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_UPLOAD, // Keep upload since we will update it each frame.
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = sizeof(CameraUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cameraBuffers[i]));
+						if (FAILED(hrBufferCreated))
+						{
+							SA_LOG(L"Create Camera Buffer failed!", Error, DX12);
+							return EXIT_FAILURE;
+						}
+					}
+				}
+
+
+				// Object Buffer
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = sizeof(ObjectUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&objectBuffer));
+					if (FAILED(hrBufferCreated))
+					{
+						SA_LOG(L"Create Sphere Object Buffer failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
+					const bool bSubmitSuccess = SubmitBufferToGPU(objectBuffer, desc.Width, &transform, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+
 				cmdLists[0]->Close();
 			}
 		}
@@ -1640,14 +1731,71 @@ int main()
 
 	// Loop
 	{
+		double oldMouseX = 0.0f;
+		double oldMouseY = 0.0f;
+		float dx = 0.0f;
+		float dy = 0.0f;
+
+		glfwGetCursorPos(window, &oldMouseX, &oldMouseY);
+
+		const float fixedTime = 0.0025f;
+		float accumulateTime = 0.0f;
+		auto start = std::chrono::steady_clock::now();
+
 		while (!glfwWindowShouldClose(window))
 		{
-			// Inputs
+			auto end = std::chrono::steady_clock::now();
+			float deltaTime = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(end - start).count();
+			accumulateTime += deltaTime;
+			start = end;
+
+			// Fixed Update
+			if (accumulateTime >= fixedTime)
 			{
+				accumulateTime -= fixedTime;
+
 				glfwPollEvents();
 
-				if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
-					glfwSetWindowShouldClose(window, true);
+				// Process input
+				{
+					if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+						glfwSetWindowShouldClose(window, true);
+					if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Forward();
+					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Forward();
+
+					double mouseX = 0.0f;
+					double mouseY = 0.0f;
+
+					glfwGetCursorPos(window, &mouseX, &mouseY);
+
+					if (mouseX != oldMouseX || mouseY != oldMouseY)
+					{
+						dx -= static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dy += static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+
+						oldMouseX = mouseX;
+						oldMouseY = mouseY;
+
+						dx = dx > SA::Maths::Pi<float> ?
+							dx - SA::Maths::Pi<float> :
+							dx < -SA::Maths::Pi<float> ? dx + SA::Maths::Pi<float> : dx;
+						dy = dy > SA::Maths::Pi<float> ?
+							dy - SA::Maths::Pi<float> :
+							dy < -SA::Maths::Pi<float> ? dy + SA::Maths::Pi<float> : dy;
+
+						cameraTr.rotation = SA::Quatf(cos(dx), 0, sin(dx), 0) * SA::Quatf(cos(dy), sin(dy), 0, 0);
+					}
+				}
 			}
 
 			// Render
@@ -1677,6 +1825,25 @@ int main()
 
 					// Set the fence value for the next frame.
 					swapchainFenceValues[swapchainFrameIndex] = prevFenceValue + 1;
+				}
+
+				// Update camera.
+				{
+					auto cameraBuffer = cameraBuffers[swapchainFrameIndex];
+
+					// Fill Data with updated values.
+					CameraUBO cameraUBO;
+					cameraUBO.view = cameraTr.Matrix();
+					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
+					cameraUBO.invViewProj = perspective * cameraUBO.view.GetInversed();
+
+					// Memory mapping and Upload (CPU to GPU transfer).
+					const D3D12_RANGE range{ .Begin = 0, .End = 0 };
+					void* data = nullptr;
+
+					cameraBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
+					std::memcpy(data, &cameraUBO, sizeof(CameraUBO));
+					cameraBuffer->Unmap(0, nullptr);
 				}
 
 
@@ -1818,6 +1985,16 @@ int main()
 						rustedIron2MetallicTexture = nullptr;
 						rustedIron2RoughnessTexture = nullptr;
 					}
+				}
+
+				// Camera Buffer
+				{
+					cameraBuffers.fill(nullptr);
+				}
+
+				// Object Buffer
+				{
+					objectBuffer = nullptr;
 				}
 			}
 

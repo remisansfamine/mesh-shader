@@ -33,17 +33,6 @@ struct VertexOutput
 };
 
 //---------- Bindings ----------
-struct Object
-{
-	/// Object transformation matrix.
-	float4x4 transform;
-};
-cbuffer ObjectBuffer : register(b0)
-{
-	Object object;
-};
-
-
 struct Camera
 {
 	/// Camera transformation matrix.
@@ -55,10 +44,21 @@ struct Camera
 	*/
 	float4x4 invViewProj;
 };
-cbuffer CameraBuffer : register(b1)
+cbuffer CameraBuffer : register(b0)
 {
 	Camera camera;
 };
+
+struct Object
+{
+	/// Object transformation matrix.
+	float4x4 transform;
+};
+cbuffer ObjectBuffer : register(b1)
+{
+	Object object;
+};
+
 
 VertexOutput mainVS(VertexFactory _input)
 {
