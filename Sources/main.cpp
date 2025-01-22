@@ -226,6 +226,20 @@ std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 */
 std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists;
 
+// Color Scene Texture
+constexpr DXGI_FORMAT sceneColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+constexpr float sceneClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+// Use Swapchain backbuffer texture as color output.
+MComPtr<ID3D12DescriptorHeap> sceneRTViewHeap;
+
+
+// Depth Scene Texture
+constexpr DXGI_FORMAT sceneDepthFormat = DXGI_FORMAT_D16_UNORM;
+constexpr D3D12_CLEAR_VALUE depthClearValue{ .Format = sceneDepthFormat, .DepthStencil = { 1.0f, 0 } };
+MComPtr<ID3D12Resource> sceneDepthTexture;
+MComPtr<ID3D12DescriptorHeap> sceneDepthRTViewHeap;
+
+
 /**
 * VkViewport -> D3D12_VIEWPORT
 * Vulkan must specify viewport on pipeline creation by default (or use dynamic viewport).
@@ -328,7 +342,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 
 
 	// Memory mapping and Upload (CPU to GPU transfer).
-	D3D12_RANGE range{ .Begin = 0, .End = 0 };
+	const D3D12_RANGE range{ .Begin = 0, .End = 0 };
 	void* data = nullptr;
 
 	// vkMapMemory -> buffer->Map
@@ -345,7 +359,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 
 
 	// Resource transition to final state.
-	D3D12_RESOURCE_BARRIER barrier{
+	const D3D12_RESOURCE_BARRIER barrier{
 		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
 		.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
 		.Transition = {
@@ -409,7 +423,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 
 
 	// Memory mapping and Upload (CPU to GPU transfer).
-	D3D12_RANGE range{ .Begin = 0, .End = 0 };
+	const D3D12_RANGE range{ .Begin = 0, .End = 0 };
 	void* data = nullptr;
 
 	stagingBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
@@ -449,7 +463,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 
 
 	// Resource transition to final state.
-	D3D12_RESOURCE_BARRIER barrier{
+	const D3D12_RESOURCE_BARRIER barrier{
 		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
 		.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
 		.Transition = {
@@ -590,7 +604,7 @@ int main()
 
 					// GFX
 					{
-						D3D12_COMMAND_QUEUE_DESC desc{
+						const D3D12_COMMAND_QUEUE_DESC desc{
 							.Type = D3D12_COMMAND_LIST_TYPE_DIRECT,
 							.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE,
 						};
@@ -630,10 +644,10 @@ int main()
 
 			// Swapchain
 			{
-				DXGI_SWAP_CHAIN_DESC1 desc{
+				const DXGI_SWAP_CHAIN_DESC1 desc{
 					.Width = windowSize.x,
 					.Height = windowSize.y,
-					.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+					.Format = sceneColorFormat,
 					.Stereo = false,
 					.SampleDesc = {.Count = 1, .Quality = 0 },
 					.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
@@ -713,6 +727,100 @@ int main()
 			}
 
 
+			// Scene Resources
+			{
+				// Color RT View Heap
+				{
+					/**
+					* Create a Render Target typed heap to allocate views.
+					*/
+					const D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+						.NumDescriptors = bufferingCount,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+						.NodeMask = 0,
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sceneRTViewHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create RenderTarget ViewHeap failed.", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+
+					// Create RT Views (for each frame)
+					D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = sceneRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+					const UINT rtvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						device->CreateRenderTargetView(swapchainImages[i].Get(), nullptr, rtvHandle);
+						rtvHandle.ptr += rtvOffset;
+					}
+				}
+
+				// Depth Scene Texture
+				{
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+						.Alignment = 0u,
+						.Width = windowSize.x,
+						.Height = windowSize.y,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = sceneDepthFormat,
+						.SampleDesc = DXGI_SAMPLE_DESC{
+							.Count = 1,
+							.Quality = 0,
+						},
+						.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
+						.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+					};
+
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+						.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+						.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN,
+						.CreationNodeMask = 1,
+						.VisibleNodeMask = 1,
+					};
+
+					const HRESULT hrCreateDepthTexture = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &depthClearValue, IID_PPV_ARGS(&sceneDepthTexture));
+					if (FAILED(hrCreateDepthTexture))
+					{
+						SA_LOG(L"Create Scene Depth Texture failed.", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+				// Depth Scene RT View Heap
+				{
+					/**
+					* Create a 'Depth' typed heap to allocate views.
+					*/
+					const D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+						.NumDescriptors = 1,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+						.NodeMask = 0,
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sceneDepthRTViewHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create Depth ViewHeap failed.", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					/**
+					* Create Depth View to use sceneDepthTexture as a render target.
+					*/
+					device->CreateDepthStencilView(sceneDepthTexture.Get(), nullptr, sceneDepthRTViewHeap->GetCPUDescriptorHandleForHeapStart());
+				}
+			}
+
+
 			// Pipeline
 			{
 #if SA_DEBUG
@@ -751,7 +859,7 @@ int main()
 						*/
 
 						// Use Descriptor Table to bind all the textures at once.
-						D3D12_DESCRIPTOR_RANGE1 pbrTextureRange[]{
+						const D3D12_DESCRIPTOR_RANGE1 pbrTextureRange[]{
 							// Albedo
 							{
 								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
@@ -786,7 +894,7 @@ int main()
 							},
 						};
 
-						D3D12_ROOT_PARAMETER1 params[]{
+						const D3D12_ROOT_PARAMETER1 params[]{
 							// Object Constant buffer
 							{
 								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
@@ -828,7 +936,7 @@ int main()
 							}
 						};
 
-						D3D12_STATIC_SAMPLER_DESC sampler{
+						const D3D12_STATIC_SAMPLER_DESC sampler{
 							.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT,
 							.AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER,
 							.AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER,
@@ -844,7 +952,7 @@ int main()
 							.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL
 						};
 
-						D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc{
+						const D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc{
 							.Version = D3D_ROOT_SIGNATURE_VERSION_1_1,
 							.Desc_1_1{
 								.NumParameters = _countof(params),
@@ -1050,9 +1158,9 @@ int main()
 
 							.NumRenderTargets = 1,
 							.RTVFormats{
-								DXGI_FORMAT_R8G8B8A8_UNORM
+								sceneColorFormat
 							},
-							.DSVFormat = DXGI_FORMAT_D16_UNORM,
+							.DSVFormat = sceneDepthFormat,
 
 							.SampleDesc
 							{
@@ -1082,7 +1190,7 @@ int main()
 			}
 
 
-			// Resources
+			// Loaded Resources
 			{
 				cmdLists[0]->Reset(cmdAllocs[0].Get(), nullptr);
 
@@ -1574,10 +1682,82 @@ int main()
 
 				// Register Commands
 				{
+					auto cmdAlloc = cmdAllocs[swapchainFrameIndex];
 					auto cmd = cmdLists[swapchainFrameIndex];
 
+					cmdAlloc->Reset();
+					cmd->Reset(cmdAlloc.Get(), nullptr);
+
+					auto sceneColorRT = swapchainImages[swapchainFrameIndex];
+
+					/**
+					* Manage Render Targets for render:
+					* Vulkan uses vkRenderPass and vkFramebuffers to describe in advance how the render targets should be managed through passes and subpasses.
+					* DirectX12 doesn't have such system and must manage RenderTargets manually.
+					*/
+					{
+						// Color Transition to RenderTarget.
+						const D3D12_RESOURCE_BARRIER barrier{
+							.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+							.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
+							.Transition = {
+								.pResource = sceneColorRT.Get(),
+								.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+								.StateBefore = D3D12_RESOURCE_STATE_COMMON,
+								.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET,
+							},
+						};
+
+						cmd->ResourceBarrier(1, &barrier);
+
+
+						// Clear
+						{
+							// Access current frame allocated view.
+							D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = sceneRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+							const UINT rtvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+							rtvHandle.ptr += rtvOffset * swapchainFrameIndex;
+							
+							const D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = sceneDepthRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+
+							cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+							cmd->ClearRenderTargetView(rtvHandle, sceneClearColor, 0, nullptr);
+							cmd->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, depthClearValue.DepthStencil.Depth, depthClearValue.DepthStencil.Stencil, 0, nullptr);
+						}
+					}
+
+
+					// Pipeline commons
 					cmd->RSSetViewports(1, &viewport);
 					cmd->RSSetScissorRects(1, &scissorRect);
+
+
+
+
+
+					// Manage RenderTargets for present.
+					{
+						// Color Transition to Present.
+						const D3D12_RESOURCE_BARRIER barrier{
+							.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+							.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
+							.Transition = {
+								.pResource = sceneColorRT.Get(),
+								.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+								.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET,
+								.StateAfter = D3D12_RESOURCE_STATE_PRESENT,
+							},
+						};
+
+						cmd->ResourceBarrier(1, &barrier);
+					}
+
+
+					cmd->Close();
+
+					// Execute the command list.
+					ID3D12CommandList* ppCommandLists[] = { cmd.Get() };
+					graphicsQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
 				}
 
 
@@ -1653,6 +1833,13 @@ int main()
 				}
 			}
 
+
+			// Scene Resources
+			{
+				sceneRTViewHeap = nullptr;
+				sceneDepthRTViewHeap = nullptr;
+				sceneDepthTexture = nullptr;
+			}
 
 			// Commands
 			{
