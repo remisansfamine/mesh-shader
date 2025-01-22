@@ -209,14 +209,14 @@ MComPtr<ID3D12Resource> sphereIndexBuffer;
 D3D12_INDEX_BUFFER_VIEW sphereIndexBufferView;
 
 // PBR textures.
-ComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
-ComPtr<ID3D12Resource> rustedIron2NormalMapTexture;
-ComPtr<ID3D12Resource> rustedIron2MetallicTexture;
-ComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
+MComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
+MComPtr<ID3D12Resource> rustedIron2NormalTexture;
+MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
+MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
 
 
 // -------------------- Helper Functions --------------------
-void SubmitBufferToGPU(ComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
+bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
 {
 	// Create temp upload buffer.
 	MComPtr<ID3D12Resource> stagingBuffer;
@@ -238,22 +238,30 @@ void SubmitBufferToGPU(ComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const 
 		.Flags = D3D12_RESOURCE_FLAG_NONE,
 	};
 
-	const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr, IID_PPV_ARGS(&stagingBuffer));
-	if (FAILED(hBufferCreated))
+	const HRESULT hrStagBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr, IID_PPV_ARGS(&stagingBuffer));
+	if (FAILED(hrStagBufferCreated))
 	{
 		SA_LOG(L"Create Staging Buffer failed!", Error, DX12);
-		return 1;
+		return false;
 	}
 
-	// Memory mapping and CPU to GPU transfer
+
+	// Memory mapping and Upload (CPU to GPU transfer).
 	D3D12_RANGE range{ .Begin = 0, .End = 0 };
 	void* data = nullptr;
+
+	// vkMapMemory -> buffer->Map
 	stagingBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
+
 	std::memcpy(data, _data, _size);
+
+	// vkUnmapMemory -> buffer->Unmap
 	stagingBuffer->Unmap(0, nullptr);
 
-	// GPU temp staging buffer to final GPU-only buffer copy.
+
+	// Copy GPU temp staging buffer to final GPU-only buffer.
 	cmdLists[0]->CopyBufferRegion(_gpuBuffer.Get(), 0, stagingBuffer.Get(), 0, _size);
+
 
 	// Resource transition to final state.
 	D3D12_RESOURCE_BARRIER barrier{
@@ -273,7 +281,7 @@ void SubmitBufferToGPU(ComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const 
 
 	/**
 	* Instant command submit execution (easy implementation)
-	* Better code would parallelize resources loading in staging buffer and submit only once at the end to execute all GPu copies.
+	* Better code would parallelize resources loading in staging buffer and submit only once at the end to execute all GPU copies.
 	*/
 
 	ID3D12CommandList* cmdListsArr[] = { cmdLists[0].Get() };
@@ -288,6 +296,8 @@ void SubmitBufferToGPU(ComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const 
 
 	cmdAllocs[0]->Reset();
 	cmdLists[0]->Reset(cmdAllocs[0].Get(), nullptr);
+
+	return true;
 }
 
 int main()
@@ -307,7 +317,7 @@ int main()
 			if (!window)
 			{
 				SA_LOG(L"GLFW create window failed!", Error, GLFW);
-				return 1;
+				return EXIT_FAILURE;
 			}
 
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -324,8 +334,8 @@ int main()
 				{
 					MComPtr<ID3D12Debug1> debugController = nullptr;
 
-					const HRESULT hDebugInterface = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
-					if (SUCCEEDED(hDebugInterface))
+					const HRESULT hrDebugInterface = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
+					if (SUCCEEDED(hrDebugInterface))
 					{
 						debugController->EnableDebugLayer();
 						debugController->SetEnableGPUBasedValidation(true);
@@ -339,11 +349,11 @@ int main()
 				// Enable additional debug layers.
 				dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
 #endif
-				const HRESULT hFactoryCreated = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
-				if (FAILED(hFactoryCreated))
+				const HRESULT hrFactoryCreated = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
+				if (FAILED(hrFactoryCreated))
 				{
 					SA_LOG(L"Create Factory failed!", Error, DX12);
-					return 1;
+					return EXIT_FAILURE;
 				}
 			}
 			
@@ -353,18 +363,18 @@ int main()
 				MComPtr<IDXGIAdapter3> physicalDevice;
 
 				// Select first prefered GPU, listed by HIGH_PERFORMANCE. No need to manually sort GPU like Vulkan.
-				const HRESULT hQueryGPU = factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&physicalDevice));
-				if (FAILED(hQueryGPU))
+				const HRESULT hrQueryGPU = factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&physicalDevice));
+				if (FAILED(hrQueryGPU))
 				{
 					SA_LOG(L"Physical Device not found!", Error, DX12);
-					return 0;
+					return EXIT_FAILURE;
 				}
 
-				const HRESULT hDeviceCreated = D3D12CreateDevice(physicalDevice.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
-				if (FAILED(hDeviceCreated))
+				const HRESULT hrDeviceCreated = D3D12CreateDevice(physicalDevice.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
+				if (FAILED(hrDeviceCreated))
 				{
 					SA_LOG(L"Create Device failed!", Error, DX12);
-					return 0;
+					return EXIT_FAILURE;
 				}
 
 #if SA_DEBUG
@@ -372,8 +382,8 @@ int main()
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
 
-					const HRESULT hQueryInfoQueue = device->QueryInterface(IID_PPV_ARGS(&infoQueue));
-					if (SUCCEEDED(hQueryInfoQueue))
+					const HRESULT hrQueryInfoQueue = device->QueryInterface(IID_PPV_ARGS(&infoQueue));
+					if (SUCCEEDED(hrQueryInfoQueue))
 					{
 						/**
 						* Cookie must be provided to properly register message callback (and unregister later).
@@ -408,11 +418,11 @@ int main()
 						* DX12 can create queue 'on the fly' after device creation.
 						* No need to specify in advance how many queues will be used by the device object.
 						*/
-						const HRESULT hCmdQueueCreated = device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
-						if (FAILED(hCmdQueueCreated))
+						const HRESULT hrGFXCmdQueueCreated = device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
+						if (FAILED(hrGFXCmdQueueCreated))
 						{
 							SA_LOG(L"Create Graphics Queue failed!", Error, DX12);
-							return 1;
+							return EXIT_FAILURE;
 						}
 					}
 				}
@@ -436,18 +446,18 @@ int main()
 				};
 
 				MComPtr<IDXGISwapChain1> swapchain1;
-				const HRESULT hSwapChainCreated = factory->CreateSwapChainForHwnd(graphicsQueue.Get(), glfwGetWin32Window(window), &desc, nullptr, nullptr, &swapchain1);
-				if (FAILED(hSwapChainCreated))
+				const HRESULT hrSwapChainCreated = factory->CreateSwapChainForHwnd(graphicsQueue.Get(), glfwGetWin32Window(window), &desc, nullptr, nullptr, &swapchain1);
+				if (FAILED(hrSwapChainCreated))
 				{
 					SA_LOG(L"Create Swapchain failed!", Error, DX12);
-					return 1;
+					return EXIT_FAILURE;
 				}
 
-				const HRESULT hSwapChainCast = swapchain1.As(&swapchain);
-				if (FAILED(hSwapChainCast))
+				const HRESULT hrSwapChainCast = swapchain1.As(&swapchain);
+				if (FAILED(hrSwapChainCast))
 				{
 					SA_LOG(L"Swapchain cast failed!", Error, DX12);
-					return 1;
+					return EXIT_FAILURE;
 				}
 
 				// Synchronization
@@ -456,25 +466,25 @@ int main()
 					if (!swapchainFenceEvent)
 					{
 						SA_LOG(L"Create Swapchain Fence Event failed!", Error, DX12);
-						return 1;
+						return EXIT_FAILURE;
 					}
 
-					const HRESULT hSwapChainFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapchainFence));
-					if (FAILED(hSwapChainFenceCreated))
+					const HRESULT hrSwapChainFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapchainFence));
+					if (FAILED(hrSwapChainFenceCreated))
 					{
 						SA_LOG(L"Create Swapchain Fence failed!", Error, DX12);
-						return 1;
+						return EXIT_FAILURE;
 					}
 				}
 
 				// Query back-buffers
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
-					const HRESULT hSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
-					if (hSwapChainGetBuffer)
+					const HRESULT hrSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
+					if (hrSwapChainGetBuffer)
 					{
 						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12);
-						return 1;
+						return EXIT_FAILURE;
 					}
 				}
 			}
@@ -484,18 +494,18 @@ int main()
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
-					const HRESULT hCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAllocs[i]));
-					if (FAILED(hCmdAllocCreated))
+					const HRESULT hrCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAllocs[i]));
+					if (FAILED(hrCmdAllocCreated))
 					{
 						SA_LOG((L"Create Command Allocator [%1] failed!", i), Error, DX12);
-						return 1;
+						return EXIT_FAILURE;
 					}
 
-					const HRESULT hCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAllocs[i].Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
-					if (FAILED(hCmdListCreated))
+					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAllocs[i].Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
+					if (FAILED(hrCmdListCreated))
 					{
 						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12);
-						return 1;
+						return EXIT_FAILURE;
 					}
 
 					// Command list must be closed because we will start the frame by Reset()
@@ -519,7 +529,7 @@ int main()
 						if (!scene)
 						{
 							SA_LOG(L"Assimp loading failed!", Error, Assimp, path);
-							return 1;
+							return EXIT_FAILURE;
 						}
 
 						const aiMesh* inMesh = scene->mMeshes[0];
@@ -550,11 +560,11 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[0]));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[0]));
+							if (FAILED(hrBufferCreated))
 							{
-								SA_LOG(L"Create Sphere Vertex Buffer failed!", Error, DX12);
-								return 1;
+								SA_LOG(L"Create Sphere Vertex Position Buffer failed!", Error, DX12);
+								return EXIT_FAILURE;
 							}
 
 							sphereVertexBufferViews[0] = D3D12_VERTEX_BUFFER_VIEW{
@@ -563,7 +573,12 @@ int main()
 								.StrideInBytes = sizeof(SA::Vec3f),
 							};
 
-							SubmitBufferToGPU(sphereVertexBuffers[0], desc.Width, inMesh->mVertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[0], desc.Width, inMesh->mVertices, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Position Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 						}
 
 						// Normal
@@ -585,11 +600,11 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[1]));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[1]));
+							if (FAILED(hrBufferCreated))
 							{
-								SA_LOG(L"Create Sphere Normal Buffer failed!", Error, DX12);
-								return 1;
+								SA_LOG(L"Create Sphere Vertex Normal Buffer failed!", Error, DX12);
+								return EXIT_FAILURE;
 							}
 
 							sphereVertexBufferViews[1] = D3D12_VERTEX_BUFFER_VIEW{
@@ -598,7 +613,12 @@ int main()
 								.StrideInBytes = sizeof(SA::Vec3f),
 							};
 
-							SubmitBufferToGPU(sphereVertexBuffers[1], desc.Width, inMesh->mNormals, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[1], desc.Width, inMesh->mNormals, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Normal Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 						}
 
 						// Tangent
@@ -620,11 +640,11 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[2]));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[2]));
+							if (FAILED(hrBufferCreated))
 							{
-								SA_LOG(L"Create Sphere Tangent Buffer failed!", Error, DX12);
-								return 1;
+								SA_LOG(L"Create Sphere Vertex Tangent Buffer failed!", Error, DX12);
+								return EXIT_FAILURE;
 							}
 
 							sphereVertexBufferViews[2] = D3D12_VERTEX_BUFFER_VIEW{
@@ -633,7 +653,12 @@ int main()
 								.StrideInBytes = sizeof(SA::Vec3f),
 							};
 
-							SubmitBufferToGPU(sphereVertexBuffers[2], desc.Width, inMesh->mTangents, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[2], desc.Width, inMesh->mTangents, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Tangent Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 						}
 
 						// UV
@@ -655,11 +680,11 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[3]));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[3]));
+							if (FAILED(hrBufferCreated))
 							{
-								SA_LOG(L"Create Sphere UV Buffer failed!", Error, DX12);
-								return 1;
+								SA_LOG(L"Create Sphere Vertex UV Buffer failed!", Error, DX12);
+								return EXIT_FAILURE;
 							}
 
 							sphereVertexBufferViews[3] = D3D12_VERTEX_BUFFER_VIEW{
@@ -676,7 +701,12 @@ int main()
 								uvs.push_back(SA::Vec2f{ inMesh->mTextureCoords[0][i].x, inMesh->mTextureCoords[0][i].y });
 							}
 
-							SubmitBufferToGPU(sphereVertexBuffers[3], desc.Width, uvs.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[3], desc.Width, uvs.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex UV Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 						}
 
 						// Index
@@ -698,11 +728,11 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereIndexBuffer));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereIndexBuffer));
+							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create Sphere Index Buffer failed!", Error, DX12);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
 							sphereIndexBufferView = D3D12_INDEX_BUFFER_VIEW{
@@ -723,7 +753,12 @@ int main()
 								indices[i * 3 + 2] = inMesh->mFaces[i].mIndices[2];
 							}
 
-							SubmitBufferToGPU(sphereIndexBuffer, desc.Width, indices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereIndexBuffer, desc.Width, indices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Index Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 						}
 					}
 				}
@@ -744,7 +779,7 @@ int main()
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
 							const D3D12_HEAP_PROPERTIES heap{
@@ -764,14 +799,19 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2AlbedoTexture));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2AlbedoTexture));
+							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create RustedIron2 Albedo Texture failed!", Error, DX12);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
-							SubmitTextureToGPU(rustedIron2AlbedoTexture, width, height, channels, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoTexture, width, height, channels, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"RustedIron2 Albedo Texture submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 
 							stbi_image_free(inData);
 						}
@@ -785,7 +825,7 @@ int main()
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
 							const D3D12_HEAP_PROPERTIES heap{
@@ -805,14 +845,19 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2NormalMapTexture));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2NormalTexture));
+							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create RustedIron2 Normal Texture failed!", Error, DX12);
 								return 1;
 							}
 
-							SubmitTextureToGPU(rustedIron2NormalMapTexture, width, height, 4, DXGI_FORMAT_R8G8B8A8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalTexture, width, height, 4, DXGI_FORMAT_R8G8B8A8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"RustedIron2 Normal Texture submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 
 							stbi_image_free(inData);
 						}
@@ -826,7 +871,7 @@ int main()
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
 							const D3D12_HEAP_PROPERTIES heap{
@@ -846,14 +891,19 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2MetallicTexture));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2MetallicTexture));
+							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create RustedIron2 Metallic Texture failed!", Error, DX12);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
-							SubmitTextureToGPU(rustedIron2MetallicTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"RustedIron2 Metallic Texture submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 
 							stbi_image_free(inData);
 						}
@@ -867,7 +917,7 @@ int main()
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
 							const D3D12_HEAP_PROPERTIES heap{
@@ -887,14 +937,19 @@ int main()
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
 							};
 
-							const HRESULT hBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2RoughnessTexture));
-							if (FAILED(hBufferCreated))
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&rustedIron2RoughnessTexture));
+							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create RustedIron2 Roughness Texture failed!", Error, DX12);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
-							SubmitTextureToGPU(rustedIron2RoughnessTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"RustedIron2 Roughness Texture submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
 
 							stbi_image_free(inData);
 						}
@@ -988,7 +1043,8 @@ int main()
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
 
-					if (device->QueryInterface(IID_PPV_ARGS(&infoQueue)) == S_OK)
+					const HRESULT hrQueryInfoQueue = device->QueryInterface(IID_PPV_ARGS(&infoQueue));
+					if (SUCCEEDED(hrQueryInfoQueue))
 					{
 						infoQueue->UnregisterMessageCallback(VLayerCallbackCookie);
 						VLayerCallbackCookie = 0;
@@ -1008,7 +1064,8 @@ int main()
 				// Report live objects
 				MComPtr<IDXGIDebug1> dxgiDebug = nullptr;
 
-				if (DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiDebug)) == S_OK)
+				const HRESULT hrDebugInterface = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiDebug));
+				if (SUCCEEDED(hrDebugInterface))
 				{
 					dxgiDebug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_FLAGS(DXGI_DEBUG_RLO_ALL | DXGI_DEBUG_RLO_IGNORE_INTERNAL));
 				}
