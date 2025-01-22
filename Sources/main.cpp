@@ -74,6 +74,7 @@ using MComPtr = Microsoft::WRL::ComPtr<T>;
 
 /**
 * Header specific to create a Factory (required to create a Device).
+* Requires `dxgi.lib`
 */
 #include <dxgi1_6.h>
 // VkInstance -> IDXGIFactory
@@ -83,6 +84,7 @@ MComPtr<IDXGIFactory6> factory;
 /**
 * DX12 additionnal Debug tools:
 * Report live objects after uninitialization to track leak and understroyed objects.
+* Requires `dxguid.lib`
 */
 #include <DXGIDebug.h>
 
@@ -90,6 +92,7 @@ MComPtr<IDXGIFactory6> factory;
 /**
 * Base DirectX12 header.
 * vulkan.h -> d3d12.h
+* Requires `d3d12.lib`
 */
 #include <d3d12.h>
 // VkDevice -> ID3D12Device
@@ -222,6 +225,29 @@ std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 * Like for Vulkan, we allocate 1 command buffer per frame (using the current frame command allocator (pool)).
 */
 std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists;
+
+/**
+* Basic helper shader compiler header.
+* For more advanced features use DirectXShaderCompiler library.
+* Requires `d3dcompiler.lib`
+*/
+#include <d3dcompiler.h>
+
+/**
+* VkShaderModule -> ID3DBlob
+*/
+MComPtr<ID3DBlob> litVertexShader;
+MComPtr<ID3DBlob> litPixelShader;
+
+/**
+* VkPipelineLayout -> ID3D12RootSignature
+*/
+MComPtr<ID3D12RootSignature> litRootSign;
+
+/**
+* VkPipeline -> ID3D12PipelineState
+*/
+MComPtr<ID3D12PipelineState> litPipelineState;
 
 
 // VkBuffer -> ID3D12Resource
@@ -439,6 +465,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 
 	return true;
 }
+
 
 int main()
 {
@@ -668,6 +695,356 @@ int main()
 
 					// Command list must be closed because we will start the frame by Reset()
 					cmdLists[i]->Close();
+				}
+			}
+
+
+			// Pipeline
+			{
+#if SA_DEBUG
+				// Enable better shader debugging with the graphics debugging tools.
+				const UINT shaderCompileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#else
+				const UINT shaderCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+#endif
+
+				// Lit
+				{
+					// RootSignature
+					{
+						/**
+						* Root signature is the Pipeline Layout.
+						* Describe the shader bindings.
+						*/
+
+						// Use Descriptor Table to bind all the textures at once.
+						D3D12_DESCRIPTOR_RANGE1 pbrTextureRange[]{
+							// Albedo
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 1,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							},
+							// Normal
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 2,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							},
+							// Metallic
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 3,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							},
+							// Roughness
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 4,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							},
+						};
+
+						D3D12_ROOT_PARAMETER1 params[]{
+							// Object Constant buffer
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
+								.Descriptor = {
+									.ShaderRegister = 0,
+									.RegisterSpace = 0,
+									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE,
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
+							},
+							// Camera Constant buffer
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
+								.Descriptor = {
+									.ShaderRegister = 1,
+									.RegisterSpace = 0,
+									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE,
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
+							},
+							// Point Lights Structured buffer
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV,
+								.Descriptor {
+									.ShaderRegister = 0,
+									.RegisterSpace = 0,
+									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC,
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
+							},
+							// PBR texture table
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = _countof(pbrTextureRange),
+									.pDescriptorRanges = pbrTextureRange
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
+							}
+						};
+
+						D3D12_STATIC_SAMPLER_DESC sampler{
+							.Filter = D3D12_FILTER_MIN_MAG_MIP_POINT,
+							.AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+							.AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+							.AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+							.MipLODBias = 0,
+							.MaxAnisotropy = 0,
+							.ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER,
+							.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK,
+							.MinLOD = 0.0f,
+							.MaxLOD = D3D12_FLOAT32_MAX,
+							.ShaderRegister = 0,
+							.RegisterSpace = 0,
+							.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL
+						};
+
+						D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc{
+							.Version = D3D_ROOT_SIGNATURE_VERSION_1_1,
+							.Desc_1_1{
+								.NumParameters = _countof(params),
+								.pParameters = params,
+								.NumStaticSamplers = 1,
+								.pStaticSamplers = &sampler,
+								.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT
+							}
+						};
+
+
+						MComPtr<ID3DBlob> signature;
+						MComPtr<ID3DBlob> error;
+
+						// RootSignature description must be serialized before creating object.
+						const HRESULT hrSerRootSign = D3D12SerializeVersionedRootSignature(&desc, &signature, &error);
+						if (FAILED(hrSerRootSign))
+						{
+							std::string errorStr(static_cast<char*>(error->GetBufferPointer()), error->GetBufferSize());
+							SA_LOG(L"Serialized Lit RootSignature failed.", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+
+
+						const HRESULT hrCreateRootSign = device->CreateRootSignature(0, signature->GetBufferPointer(), signature->GetBufferSize(), IID_PPV_ARGS(&litRootSign));
+						if (FAILED(hrCreateRootSign))
+						{
+							SA_LOG(L"Create Lit RootSignature failed.", Error, DX12);
+							return EXIT_FAILURE;
+						}
+					}
+
+
+					// Vertex Shader
+					{
+						MComPtr<ID3DBlob> errors;
+
+						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/LitShader.hlsl", nullptr, nullptr, "mainVS", "vs_5_0", shaderCompileFlags, 0, &litVertexShader, &errors);
+
+						if (FAILED(hrCompileShader))
+						{
+							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+							SA_LOG(L"Shader {LitShader.hlsl, mainVS} compilation failed.", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+					}
+
+					// Fragment Shader
+					{
+						MComPtr<ID3DBlob> errors;
+
+						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/LitShader.hlsl", nullptr, nullptr, "mainPS", "ps_5_0", shaderCompileFlags, 0, &litPixelShader, &errors);
+
+						if (FAILED(hrCompileShader))
+						{
+							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+							SA_LOG(L"Shader {LitShader.hlsl, mainPS} compilation failed.", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+					}
+
+
+					// PipelineState
+					{
+						const D3D12_RENDER_TARGET_BLEND_DESC rtBlend{
+							.BlendEnable = false,
+							.LogicOpEnable = false,
+
+							.SrcBlend = D3D12_BLEND_ONE,
+							.DestBlend = D3D12_BLEND_ZERO,
+							.BlendOp = D3D12_BLEND_OP_ADD,
+
+							.SrcBlendAlpha = D3D12_BLEND_ONE,
+							.DestBlendAlpha = D3D12_BLEND_ZERO,
+							.BlendOpAlpha = D3D12_BLEND_OP_ADD,
+
+							.LogicOp = D3D12_LOGIC_OP_NOOP,
+
+							.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL,
+						};
+
+						const D3D12_BLEND_DESC blendState{
+							.AlphaToCoverageEnable = false,
+							.IndependentBlendEnable = false,
+
+							.RenderTarget
+							{
+								rtBlend,
+								rtBlend,
+								rtBlend,
+								rtBlend,
+								rtBlend,
+								rtBlend,
+								rtBlend,
+								rtBlend
+							}
+						};
+
+						const D3D12_RASTERIZER_DESC raster{
+							.FillMode = D3D12_FILL_MODE_SOLID,
+							.CullMode = D3D12_CULL_MODE_BACK,
+							.FrontCounterClockwise = FALSE,
+							.DepthBias = D3D12_DEFAULT_DEPTH_BIAS,
+							.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP,
+							.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
+							.DepthClipEnable = TRUE,
+							.MultisampleEnable = FALSE,
+							.AntialiasedLineEnable = FALSE,
+							.ForcedSampleCount = 0,
+							.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF,
+						};
+
+						const D3D12_DEPTH_STENCIL_DESC depthStencilState{
+							.DepthEnable = TRUE,
+							.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL,
+							.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL,
+							.StencilEnable = FALSE,
+							.StencilReadMask = D3D12_DEFAULT_STENCIL_READ_MASK,
+							.StencilWriteMask = D3D12_DEFAULT_STENCIL_WRITE_MASK,
+							.FrontFace
+							{
+								.StencilFailOp = D3D12_STENCIL_OP_KEEP,
+								.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP,
+								.StencilPassOp = D3D12_STENCIL_OP_KEEP,
+								.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS,
+							},
+							.BackFace
+							{
+								.StencilFailOp = D3D12_STENCIL_OP_KEEP,
+								.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP,
+								.StencilPassOp = D3D12_STENCIL_OP_KEEP,
+								.StencilFunc = D3D12_COMPARISON_FUNC_ALWAYS,
+							}
+						};
+
+						D3D12_INPUT_ELEMENT_DESC inputElems[]{
+							{
+								.SemanticName = "POSITION",
+								.SemanticIndex = 0,
+								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+								.InputSlot = 0,
+								.AlignedByteOffset = 0,
+								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+								.InstanceDataStepRate = 0
+							},
+							{
+								.SemanticName = "NORMAL",
+								.SemanticIndex = 0,
+								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+								.InputSlot = 1,
+								.AlignedByteOffset = 0,
+								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+								.InstanceDataStepRate = 0
+							},
+							{
+								.SemanticName = "TANGENT",
+								.SemanticIndex = 0,
+								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+								.InputSlot = 2,
+								.AlignedByteOffset = 0,
+								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+								.InstanceDataStepRate = 0
+							},
+							{
+								.SemanticName = "TEXCOORD",
+								.SemanticIndex = 0,
+								.Format = DXGI_FORMAT_R32G32_FLOAT,
+								.InputSlot = 3,
+								.AlignedByteOffset = 0,
+								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+								.InstanceDataStepRate = 0
+							}
+						};
+						const D3D12_INPUT_LAYOUT_DESC inputLayout{
+							.pInputElementDescs = inputElems,
+							.NumElements = _countof(inputElems)
+						};
+
+
+						const D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{
+							.pRootSignature = litRootSign.Get(),
+							
+							.VS{
+								.pShaderBytecode = litVertexShader->GetBufferPointer(),
+								.BytecodeLength = litVertexShader->GetBufferSize()
+							},
+							.PS{
+								.pShaderBytecode = litPixelShader->GetBufferPointer(),
+								.BytecodeLength = litPixelShader->GetBufferSize()
+							},
+							
+							.StreamOutput = {},
+							.BlendState = blendState,
+							.SampleMask = UINT_MAX,
+
+							.RasterizerState = raster,
+							.InputLayout = inputLayout,
+
+							.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+
+							.NumRenderTargets = 1,
+							.RTVFormats{
+								DXGI_FORMAT_R8G8B8A8_UNORM
+							},
+							.DSVFormat = DXGI_FORMAT_D16_UNORM,
+
+							.SampleDesc
+							{
+								.Count = 1,
+								.Quality = 0,
+							},
+
+							.NodeMask = 0,
+
+							.CachedPSO
+							{
+								.pCachedBlob = nullptr,
+								.CachedBlobSizeInBytes = 0,
+							},
+
+							.Flags = D3D12_PIPELINE_STATE_FLAG_NONE,
+						};
+
+						const HRESULT hrCreatePipeline = device->CreateGraphicsPipelineState(&desc, IID_PPV_ARGS(&litPipelineState));
+						if (FAILED(hrCreatePipeline))
+						{
+							SA_LOG(L"Create Lit PipelineState failed.", Error, DX12);
+							return EXIT_FAILURE;
+						}
+					}
 				}
 			}
 
@@ -1219,6 +1596,18 @@ int main()
 						rustedIron2MetallicTexture = nullptr;
 						rustedIron2RoughnessTexture = nullptr;
 					}
+				}
+			}
+
+			
+			// Pipeline
+			{
+				// Lit
+				{
+					litPipelineState = nullptr;
+					litVertexShader = nullptr;
+					litPixelShader = nullptr;
+					litRootSign = nullptr;
 				}
 			}
 

@@ -24,7 +24,7 @@ target_compile_options(FromVulkanToDirectX12 PRIVATE /W4 /WX)
 
 
 # Link libraries
-target_link_libraries(FromVulkanToDirectX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib)
+target_link_libraries(FromVulkanToDirectX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
 target_link_libraries(FromVulkanToDirectX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
 
 
