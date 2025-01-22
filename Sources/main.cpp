@@ -338,7 +338,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 
 bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _height, int _channelNum, DXGI_FORMAT _format, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
 {
-	const UINT64 size = static_cast<UINT64>(_width * _height);
+	const UINT64 size = static_cast<UINT64>(_width * _height * _channelNum);
 
 	// Create temp upload buffer.
 	MComPtr<ID3D12Resource> stagingBuffer;
@@ -564,6 +564,24 @@ int main()
 							SA_LOG(L"Create Graphics Queue failed!", Error, DX12);
 							return EXIT_FAILURE;
 						}
+					}
+				}
+
+
+				// Synchronization
+				{
+					deviceFenceEvent = CreateEvent(nullptr, false, false, nullptr);
+					if (!deviceFenceEvent)
+					{
+						SA_LOG(L"Create Device Fence Event failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					const HRESULT hrDeviceFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&deviceFence));
+					if (FAILED(hrDeviceFenceCreated))
+					{
+						SA_LOG(L"Create Device Fence failed!", Error, DX12);
+						return EXIT_FAILURE;
 					}
 				}
 			}
@@ -1174,6 +1192,8 @@ int main()
 	{
 		// Renderer
 		{
+			WaitDeviceIdle();
+
 			// Resources
 			{
 				// Meshes
@@ -1212,14 +1232,25 @@ int main()
 
 			// Swapchain
 			{
-				CloseHandle(swapchainFenceEvent);
-				swapchainFence = nullptr;
+				// Synchronization
+				{
+					CloseHandle(swapchainFenceEvent);
+					swapchainFence = nullptr;
+				}
+
+				swapchainImages.fill(nullptr);
 				swapchain = nullptr;
 			}
 
 
 			// Device
 			{
+				// Synchronization
+				{
+					CloseHandle(deviceFenceEvent);
+					deviceFence = nullptr;
+				}
+
 				// Queue
 				{
 					// GFX
