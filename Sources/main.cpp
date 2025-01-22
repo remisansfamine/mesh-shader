@@ -189,19 +189,6 @@ HANDLE deviceFenceEvent;
 MComPtr<ID3D12Fence> deviceFence;
 uint32_t deviceFenceValue = 0u;
 
-void WaitDeviceIdle()
-{
-	// Schedule a Signal command in the queue.
-	graphicsQueue->Signal(deviceFence.Get(), deviceFenceValue);
-
-	// Wait until the fence has been processed.
-	deviceFence->SetEventOnCompletion(deviceFenceValue, deviceFenceEvent);
-	WaitForSingleObjectEx(deviceFenceEvent, INFINITE, false);
-
-	// Increment for next use.
-	++deviceFenceValue;
-}
-
 
 // VkSwapchainKHR -> IDXGISwapChain
 MComPtr<IDXGISwapChain3> swapchain;
@@ -255,6 +242,20 @@ MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
 
 
 // -------------------- Helper Functions --------------------
+void WaitDeviceIdle()
+{
+	// Schedule a Signal command in the queue.
+	graphicsQueue->Signal(deviceFence.Get(), deviceFenceValue);
+
+	// Wait until the fence has been processed.
+	deviceFence->SetEventOnCompletion(deviceFenceValue, deviceFenceEvent);
+	WaitForSingleObjectEx(deviceFenceEvent, INFINITE, false);
+
+	// Increment for next use.
+	++deviceFenceValue;
+}
+
+
 bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
 {
 	// Create temp upload buffer.
@@ -308,6 +309,98 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 		.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
 		.Transition = {
 			.pResource = _gpuBuffer.Get(),
+			.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+			.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST,
+			.StateAfter = _stateAfter,
+		},
+	};
+
+	cmdLists[0]->ResourceBarrier(1, &barrier);
+
+	cmdLists[0]->Close();
+
+	/**
+	* Instant command submit execution (easy implementation)
+	* Better code would parallelize resources loading in staging buffer and submit only once at the end to execute all GPU copies.
+	*/
+
+	ID3D12CommandList* cmdListsArr[] = { cmdLists[0].Get() };
+	graphicsQueue->ExecuteCommandLists(1, cmdListsArr);
+
+	WaitDeviceIdle();
+
+	cmdAllocs[0]->Reset();
+	cmdLists[0]->Reset(cmdAllocs[0].Get(), nullptr);
+
+	return true;
+}
+
+bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _height, int _channelNum, DXGI_FORMAT _format, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
+{
+	// Create temp upload buffer.
+	MComPtr<ID3D12Resource> stagingBuffer;
+
+	const D3D12_HEAP_PROPERTIES heap{
+		.Type = D3D12_HEAP_TYPE_UPLOAD,
+	};
+
+	const D3D12_RESOURCE_DESC desc{
+		.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+		.Alignment = 0,
+		.Width = _width * _height,
+		.Height = 1,
+		.DepthOrArraySize = 1,
+		.MipLevels = 1,
+		.Format = DXGI_FORMAT_UNKNOWN,
+		.SampleDesc = {.Count = 1, .Quality = 0 },
+		.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+		.Flags = D3D12_RESOURCE_FLAG_NONE,
+	};
+
+	const HRESULT hrStagBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_SOURCE, nullptr, IID_PPV_ARGS(&stagingBuffer));
+	if (FAILED(hrStagBufferCreated))
+	{
+		SA_LOG(L"Create Staging Buffer failed!", Error, DX12);
+		return false;
+	}
+
+	// Copy Buffer to texture
+	/**
+	* Copy Buffer to Texture
+	* Mipmaps are not handled here. For mipmapping:
+	*   - Generate Mipmaps
+	*   - Record one copy for each mips using src.Offset and dst.SubresourceIndex
+	*/
+	const D3D12_TEXTURE_COPY_LOCATION src{
+		.pResource = stagingBuffer.Get(),
+		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+		.PlacedFootprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT{
+			.Offset = 0, // currMipLevel
+			.Footprint = D3D12_SUBRESOURCE_FOOTPRINT{
+				.Format = _format,
+				.Width = static_cast<UINT>(_width),
+				.Height = static_cast<UINT>(_height),
+				.Depth = 1,
+				.RowPitch = static_cast<UINT>(_width * _channelNum),
+			}
+		}
+	};
+
+	const D3D12_TEXTURE_COPY_LOCATION dst{
+		.pResource = _gpuTexture.Get(),
+		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+		.SubresourceIndex = 0 // currMipLevel
+	};
+
+	cmdLists[0]->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+
+
+	// Resource transition to final state.
+	D3D12_RESOURCE_BARRIER barrier{
+		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+		.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
+		.Transition = {
+			.pResource = _gpuTexture.Get(),
 			.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
 			.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST,
 			.StateAfter = _stateAfter,
