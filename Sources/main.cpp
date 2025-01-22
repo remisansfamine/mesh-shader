@@ -171,18 +171,49 @@ void ValidationLayersDebugCallback(D3D12_MESSAGE_CATEGORY _category,
 // VkQueue -> ID3D12CommandQueue
 MComPtr<ID3D12CommandQueue> graphicsQueue;
 
+/**
+* Vulkan has native WaitForGPU method (vkDeviceWaitIdle).
+* 
+* DirectX12 must implement it manually using fences.
+* For more details on Fence/Event implementation, check Swapchain synchronization implementation below.
+*/
+HANDLE deviceFenceEvent;
+MComPtr<ID3D12Fence> deviceFence;
+uint32_t deviceFenceValue = 0u;
+
+void WaitDeviceIdle()
+{
+	// Schedule a Signal command in the queue.
+	graphicsQueue->Signal(deviceFence.Get(), deviceFenceValue);
+
+	// Wait until the fence has been processed.
+	deviceFence->SetEventOnCompletion(deviceFenceValue, deviceFenceEvent);
+	WaitForSingleObjectEx(deviceFenceEvent, INFINITE, false);
+
+	// Increment for next use.
+	++deviceFenceValue;
+}
+
 
 // VkSwapchainKHR -> IDXGISwapChain
 MComPtr<IDXGISwapChain3> swapchain;
 // VkImage -> ID3D12Resource
 std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages;
+
+uint32_t swapchainFrameIndex = 0u;
+
 /**
 * Vulkan uses Semaphores and Fences for swapchain synchronization
+* 1 Fence and 1 Semaphore are used PER FRAME.
+* 
+* 
 * DirectX12 uses fence and Windows event.
+* Only 1 Frame and 1 Windows Event are used FOR ALL FRAME, with different Values (one PER FRAME).
+* See DirectX-Graphics-Samples/D3D12HelloFrameBuffering Sample for reference.
 */
 HANDLE swapchainFenceEvent;
 MComPtr<ID3D12Fence> swapchainFence;
-uint32_t swapchainFenceValue = 0;
+std::array<uint32_t, bufferingCount> swapchainFenceValues;
 
 
 /**
@@ -287,12 +318,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 	ID3D12CommandList* cmdListsArr[] = { cmdLists[0].Get() };
 	graphicsQueue->ExecuteCommandLists(1, cmdListsArr);
 
-	graphicsQueue->Signal(deviceFence.Get(), deviceFenceValue);
-
-	deviceFence->SetEventOnCompletion(deviceFenceValue, deviceFenceEvent);
-	WaitForSingleObject(deviceFenceEvent, INFINITE);
-
-	++deviceFenceValue;
+	WaitDeviceIdle();
 
 	cmdAllocs[0]->Reset();
 	cmdLists[0]->Reset(cmdAllocs[0].Get(), nullptr);
@@ -972,6 +998,57 @@ int main()
 
 				if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 					glfwSetWindowShouldClose(window, true);
+			}
+
+			// Render
+			{
+				// Swapchain Begin
+				{
+					const UINT64 prevFenceValue = swapchainFenceValues[swapchainFrameIndex];
+
+					// Update frame index.
+					swapchainFrameIndex = swapchain->GetCurrentBackBufferIndex();
+
+					const UINT64 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
+
+
+					// If the next frame is not ready to be rendered yet, wait until it is ready.
+					if (swapchainFence->GetCompletedValue() < currFenceValue)
+					{
+						const HRESULT hrSetEvent = swapchainFence->SetEventOnCompletion(currFenceValue, swapchainFenceEvent);
+						if (FAILED(hrSetEvent))
+						{
+							SA_LOG(L"Fence SetEventOnCompletion failed.", Error, DX12);
+							return EXIT_FAILURE;
+						}
+
+						WaitForSingleObjectEx(swapchainFenceEvent, INFINITE, FALSE);
+					}
+
+					// Set the fence value for the next frame.
+					swapchainFenceValues[swapchainFrameIndex] = prevFenceValue + 1;
+				}
+
+
+				// Swapchain End
+				{
+					// Automatically present using internal present Queue if possible.
+					const HRESULT hrPresent = swapchain->Present(1, 0);
+					if (FAILED(hrPresent))
+					{
+						SA_LOG(L"Swapchain Present failed", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					// Schedule a Signal command in the queue.
+					const UINT64 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
+					const HRESULT hrFenceSignal = graphicsQueue->Signal(swapchainFence.Get(), currFenceValue);
+					if (FAILED(hrFenceSignal))
+					{
+						SA_LOG(L"Swapchain Fence Signal failed", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
 			}
 
 			SA_LOG_END_OF_FRAME();
