@@ -227,6 +227,20 @@ std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists;
 
 /**
+* VkViewport -> D3D12_VIEWPORT
+* Vulkan must specify viewport on pipeline creation by default (or use dynamic viewport).
+* DirectX12 only uses dynamic viewport (set by commandlist).
+*/
+D3D12_VIEWPORT viewport;
+
+/**
+* VkRect2D -> D3D12_RECT
+* Vulkan must specify scissor rectangle on pipeline creation by default (or use dynamic scissor).
+* DirectX12 only uses dynamic scissor rectangle (set by commandlist).
+*/
+D3D12_RECT scissorRect;
+
+/**
 * Basic helper shader compiler header.
 * For more advanced features use DirectXShaderCompiler library.
 * Requires `d3dcompiler.lib`
@@ -707,6 +721,25 @@ int main()
 #else
 				const UINT shaderCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #endif
+
+				// Viewport & Scissor
+				{
+					viewport = D3D12_VIEWPORT{
+						.TopLeftX = 0,
+						.TopLeftY = 0,
+						.Width = float(windowSize.x),
+						.Height = float(windowSize.y),
+						.MinDepth = 0.0f,
+						.MaxDepth = 1.0f,
+					};
+
+					scissorRect = D3D12_RECT{
+						.left = 0,
+						.top = 0,
+						.right = static_cast<LONG>(windowSize.x),
+						.bottom = static_cast<LONG>(windowSize.y),
+					};
+				}
 
 				// Lit
 				{
@@ -1536,6 +1569,15 @@ int main()
 
 					// Set the fence value for the next frame.
 					swapchainFenceValues[swapchainFrameIndex] = prevFenceValue + 1;
+				}
+
+
+				// Register Commands
+				{
+					auto cmd = cmdLists[swapchainFrameIndex];
+
+					cmd->RSSetViewports(1, &viewport);
+					cmd->RSSetScissorRects(1, &scissorRect);
 				}
 
 
