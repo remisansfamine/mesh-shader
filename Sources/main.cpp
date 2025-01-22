@@ -24,6 +24,14 @@
 
 // Windowing
 #include <GLFW/glfw3.h>
+
+/**
+* Required to directly access HWND handle from GLFW window type.
+* See glfwGetWin32Window()
+*/
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+
 GLFWwindow* window = nullptr;
 constexpr SA::Vec2ui windowSize = { 1200, 900 };
 
