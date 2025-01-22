@@ -231,6 +231,7 @@ std::array<MComPtr<ID3D12Resource>, 4> sphereVertexBuffers;
 * DirectX12 create 'views' (aka. how to read the memory) of buffers and use them for binding.
 */
 std::array<D3D12_VERTEX_BUFFER_VIEW, 4> sphereVertexBufferViews;
+uint32_t sphereIndexCount = 0u;
 MComPtr<ID3D12Resource> sphereIndexBuffer;
 D3D12_INDEX_BUFFER_VIEW sphereIndexBufferView;
 
@@ -337,6 +338,8 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 
 bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _height, int _channelNum, DXGI_FORMAT _format, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
 {
+	const UINT64 size = static_cast<UINT64>(_width * _height);
+
 	// Create temp upload buffer.
 	MComPtr<ID3D12Resource> stagingBuffer;
 
@@ -347,7 +350,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 	const D3D12_RESOURCE_DESC desc{
 		.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 		.Alignment = 0,
-		.Width = _width * _height,
+		.Width = size,
 		.Height = 1,
 		.DepthOrArraySize = 1,
 		.MipLevels = 1,
@@ -363,6 +366,16 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 		SA_LOG(L"Create Staging Buffer failed!", Error, DX12);
 		return false;
 	}
+
+
+	// Memory mapping and Upload (CPU to GPU transfer).
+	D3D12_RANGE range{ .Begin = 0, .End = 0 };
+	void* data = nullptr;
+
+	stagingBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
+	std::memcpy(data, _data, size);
+	stagingBuffer->Unmap(0, nullptr);
+
 
 	// Copy Buffer to texture
 	/**
@@ -865,7 +878,7 @@ int main()
 							sphereIndexBufferView = D3D12_INDEX_BUFFER_VIEW{
 								.BufferLocation = sphereIndexBuffer->GetGPUVirtualAddress(),
 								.SizeInBytes = static_cast<UINT>(desc.Width),
-								.Format = DXGI_FORMAT_R16_UINT,
+								.Format = DXGI_FORMAT_R16_UINT, // This model's indices are lower than 65535.
 							};
 
 
@@ -873,11 +886,11 @@ int main()
 							indices.resize(inMesh->mNumFaces * 3);
 							sphereIndexCount = inMesh->mNumFaces * 3;
 
-							for (int i = 0; i < inMesh->mNumFaces; ++i)
+							for (unsigned int i = 0; i < inMesh->mNumFaces; ++i)
 							{
-								indices[i * 3] = inMesh->mFaces[i].mIndices[0];
-								indices[i * 3 + 1] = inMesh->mFaces[i].mIndices[1];
-								indices[i * 3 + 2] = inMesh->mFaces[i].mIndices[2];
+								indices[i * 3] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[0]);
+								indices[i * 3 + 1] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[1]);
+								indices[i * 3 + 2] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[2]);
 							}
 
 							const bool bSubmitSuccess = SubmitBufferToGPU(sphereIndexBuffer, desc.Width, indices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER);
@@ -1105,12 +1118,12 @@ int main()
 			{
 				// Swapchain Begin
 				{
-					const UINT64 prevFenceValue = swapchainFenceValues[swapchainFrameIndex];
+					const UINT32 prevFenceValue = swapchainFenceValues[swapchainFrameIndex];
 
 					// Update frame index.
 					swapchainFrameIndex = swapchain->GetCurrentBackBufferIndex();
 
-					const UINT64 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
+					const UINT32 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
 
 
 					// If the next frame is not ready to be rendered yet, wait until it is ready.
