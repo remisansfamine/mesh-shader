@@ -1,0 +1,60 @@
+{
+	"version": 3,
+	"configurePresets": [
+		{
+			"name": "VS_2022",
+			"displayName": "Visual Studio 2022",
+			"description": "MSVC Compiler",
+			"generator": "Visual Studio 17 2022",
+			"architecture": "x64",
+			"binaryDir": "${sourceDir}/build/${presetName}",
+			"cacheVariables":
+			{
+				"CMAKE_INSTALL_PREFIX": "${sourceDir}/install/${presetName}"
+			}
+		}
+
+	],
+	"buildPresets":
+	[
+		{
+			"name": "VS_2022 Debug",
+			"description": "Visual Studio multi-config Debug preset",
+			"configurePreset": "VS_2022",
+			"configuration": "Debug",
+			"verbose": true,
+			"jobs": 8
+		},
+		{
+			"name": "VS_2022 Release",
+			"description": "Visual Studio multi-config Release preset",
+			"configurePreset": "VS_2022",
+			"configuration": "Release",
+			"verbose": true,
+			"jobs": 8
+		}
+	],
+	"testPresets":
+	[
+		{
+			"name": "VS_2022 Debug",
+			"description": "Visual Studio multi-config Debug preset",
+			"configurePreset": "VS_2022",
+			"configuration": "Debug",
+			"output":
+			{
+				"verbosity": "verbose"
+			}
+		},
+		{
+			"name": "VS_2022 Release",
+			"description": "Visual Studio multi-config Release preset",
+			"configurePreset": "VS_2022",
+			"configuration": "Release",
+			"output":
+			{
+				"verbosity": "verbose"
+			}
+		}
+	]
+}
