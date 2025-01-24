@@ -922,6 +922,7 @@ int main()
 								.BaseShaderRegister = 1,
 								.RegisterSpace = 0,
 								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							},
 							// Normal
 							{
@@ -930,6 +931,7 @@ int main()
 								.BaseShaderRegister = 2,
 								.RegisterSpace = 0,
 								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							},
 							// Metallic
 							{
@@ -938,6 +940,7 @@ int main()
 								.BaseShaderRegister = 3,
 								.RegisterSpace = 0,
 								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							},
 							// Roughness
 							{
@@ -946,6 +949,7 @@ int main()
 								.BaseShaderRegister = 4,
 								.RegisterSpace = 0,
 								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							},
 						};
 
