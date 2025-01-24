@@ -184,8 +184,7 @@ PixelOutput mainPS(PixelInput _input)
 
 
 	//---------- Normal ----------
-	const float3 vnNormal = normalize(mul(_input.TBN, normalMap.Sample(pbrSampler, _input.uv)));
-
+	const float3 vnNormal = normalize(mul(_input.TBN, normalMap.Sample(pbrSampler, _input.uv) * 2.0f - 1.0f));
 
 	//---------- Lighting ----------
 	const float metallic = metallicMap.Sample(pbrSampler, _input.uv);
