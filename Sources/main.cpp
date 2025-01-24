@@ -295,7 +295,7 @@ MComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
 MComPtr<ID3D12Resource> rustedIron2NormalTexture;
 MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
 MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
-MComPtr<ID3D12DescriptorHeap> srvHeap;
+MComPtr<ID3D12DescriptorHeap> pbrSrvHeap;
 
 
 // Camera Buffer.
@@ -858,18 +858,18 @@ int main()
 				}
 
 
-				// SRV View Heap
+				// PBR SRV View Heap
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc{
 						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-						.NumDescriptors = 5,
+						.NumDescriptors = 4,
 						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 					};
 
-					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap));
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&pbrSrvHeap));
 					if (FAILED(hrCreateHeap))
 					{
-						SA_LOG(L"Create SRV ViewHeap failed.", Error, DX12);
+						SA_LOG(L"Create PBR SRV ViewHeap failed.", Error, DX12);
 						return EXIT_FAILURE;
 					}
 				}
@@ -1502,6 +1502,7 @@ int main()
 					// RustedIron2 PBR
 					{
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSrvHeap->GetCPUDescriptorHandleForHeapStart();
 
 						// Albedo
 						{
@@ -1559,10 +1560,9 @@ int main()
 										.MipLevels = 1,
 									},
 								};
-								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-								cpuHandle.ptr += 1 * srvOffset;
 
 								device->CreateShaderResourceView(rustedIron2AlbedoTexture.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
 							}
 						}
 
@@ -1622,10 +1622,8 @@ int main()
 										.MipLevels = 1,
 									},
 								};
-								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-								cpuHandle.ptr += 2 * srvOffset;
-
 								device->CreateShaderResourceView(rustedIron2NormalTexture.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
 							}
 						}
 
@@ -1685,10 +1683,9 @@ int main()
 										.MipLevels = 1,
 									},
 								};
-								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-								cpuHandle.ptr += 3 * srvOffset;
 
 								device->CreateShaderResourceView(rustedIron2MetallicTexture.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
 							}
 						}
 
@@ -1748,10 +1745,9 @@ int main()
 										.MipLevels = 1,
 									},
 								};
-								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-								cpuHandle.ptr += 4 * srvOffset;
 
 								device->CreateShaderResourceView(rustedIron2RoughnessTexture.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
 							}
 						}
 					}
@@ -1872,22 +1868,6 @@ int main()
 					{
 						SA_LOG(L"Sphere PointLight submit failed!", Error, DX12);
 						return EXIT_FAILURE;
-					}
-
-
-					// Create View
-					{
-						D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
-							.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
-							.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-							.Buffer{
-								.FirstElement = 0,
-								.NumElements = static_cast<UINT>(pointlightsUBO.size()),
-								.StructureByteStride = sizeof(PointLightUBO),
-							},
-						};
-						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
-						device->CreateShaderResourceView(pointLightBuffer.Get(), &viewDesc, cpuHandle);
 					}
 				}
 
@@ -2067,7 +2047,36 @@ int main()
 					cmd->RSSetScissorRects(1, &scissorRect);
 
 
+					// Lit Pipeline
+					{
+						/**
+						* Bind heaps.
+						* /!\ Only one heaps of each type can be bound!
+						*/
+						ID3D12DescriptorHeap* descriptorHeaps[] = { pbrSrvHeap.Get() };
+						cmd->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
+
+						/**
+						* DirectX12 doesn't have DescriptorSet: manually bind each entry of the RootSignature.
+						*/
+						cmd->SetGraphicsRootSignature(litRootSign.Get());
+						cmd->SetGraphicsRootConstantBufferView(0, cameraBuffer->GetGPUVirtualAddress()); // Camera UBO
+						cmd->SetGraphicsRootConstantBufferView(1, objectBuffer->GetGPUVirtualAddress()); // Object UBO
+						
+						cmd->SetGraphicsRootShaderResourceView(2, pointLightBuffer->GetGPUVirtualAddress()); // PointLights
+
+						cmd->SetGraphicsRootDescriptorTable(3, pbrSrvHeap->GetGPUDescriptorHandleForHeapStart()); // PBR
+
+
+						cmd->SetPipelineState(litPipelineState.Get());
+
+						// Draw Sphere
+						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+						cmd->IASetVertexBuffers(0, static_cast<UINT>(sphereVertexBufferViews.size()), sphereVertexBufferViews.data());
+						cmd->IASetIndexBuffer(&sphereIndexBufferView);
+						cmd->DrawIndexedInstanced(sphereIndexCount, 1, 0, 0, 0);
+					}
 
 
 					// Manage RenderTargets for present.
@@ -2152,6 +2161,7 @@ int main()
 						rustedIron2NormalTexture = nullptr;
 						rustedIron2MetallicTexture = nullptr;
 						rustedIron2RoughnessTexture = nullptr;
+						pbrSrvHeap = nullptr;
 					}
 				}
 
@@ -2189,7 +2199,6 @@ int main()
 				sceneRTViewHeap = nullptr;
 				sceneDepthRTViewHeap = nullptr;
 				sceneDepthTexture = nullptr;
-				srvHeap = nullptr;
 			}
 
 			// Commands
