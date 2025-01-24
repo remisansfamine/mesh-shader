@@ -887,12 +887,11 @@ int main()
 
 				// Viewport & Scissor
 				{
-					// Flip viewport for upward Y-axis
 					viewport = D3D12_VIEWPORT{
 						.TopLeftX = 0,
-						.TopLeftY = float(windowSize.y),
+						.TopLeftY = 0,
 						.Width = float(windowSize.x),
-						.Height = -float(windowSize.y),
+						.Height = float(windowSize.y),
 						.MinDepth = 0.0f,
 						.MaxDepth = 1.0f,
 					};
@@ -1129,7 +1128,7 @@ int main()
 						const D3D12_RASTERIZER_DESC raster{
 							.FillMode = D3D12_FILL_MODE_SOLID,
 							.CullMode = D3D12_CULL_MODE_BACK,
-							.FrontCounterClockwise = TRUE,
+							.FrontCounterClockwise = FALSE,
 							.DepthBias = D3D12_DEFAULT_DEPTH_BIAS,
 							.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP,
 							.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
@@ -1869,15 +1868,15 @@ int main()
 					std::array<PointLightUBO, 2> pointlightsUBO{
 						PointLightUBO{
 							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
-							.intensity = 2.0f,
+							.intensity = 4.0f,
 							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
 							.radius = 3.0f
 						},
 						PointLightUBO{
-							.position = SA::Vec3f(0.75f, 1.0f, 1.0f),
-							.intensity = 4.0f,
+							.position = SA::Vec3f(1.75f, 2.0f, 1.0f),
+							.intensity = 7.0f,
 							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
-							.radius = 3.0f
+							.radius = 4.0f
 						}
 					};
 
@@ -1946,9 +1945,9 @@ int main()
 					if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
 						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Right();
 					if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
-						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Up();
-					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
 						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Up();
 					if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
 						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Forward();
 					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
@@ -1962,7 +1961,7 @@ int main()
 					if (mouseX != oldMouseX || mouseY != oldMouseY)
 					{
 						dx += static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
-						dy -= static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dy += static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
 
 						oldMouseX = mouseX;
 						oldMouseY = mouseY;
