@@ -295,7 +295,7 @@ MComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
 MComPtr<ID3D12Resource> rustedIron2NormalTexture;
 MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
 MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
-MComPtr<ID3D12DescriptorHeap> pbrSrvHeap;
+MComPtr<ID3D12DescriptorHeap> srvHeap;
 
 
 // Camera Buffer.
@@ -858,18 +858,18 @@ int main()
 				}
 
 
-				// PBR SRV View Heap
+				// SRV View Heap
 				{
 					D3D12_DESCRIPTOR_HEAP_DESC desc{
 						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-						.NumDescriptors = 4,
+						.NumDescriptors = 5,
 						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 					};
 
-					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&pbrSrvHeap));
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap));
 					if (FAILED(hrCreateHeap))
 					{
-						SA_LOG(L"Create PBR SRV ViewHeap failed.", Error, DX12);
+						SA_LOG(L"Create SRV ViewHeap failed.", Error, DX12);
 						return EXIT_FAILURE;
 					}
 				}
@@ -913,6 +913,15 @@ int main()
 						* Root signature is the Pipeline Layout.
 						* Describe the shader bindings.
 						*/
+
+						const D3D12_DESCRIPTOR_RANGE1 pointLightSRVRange{
+							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+							.NumDescriptors = 1,
+							.BaseShaderRegister = 0,
+							.RegisterSpace = 0,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						};
 
 						// Use Descriptor Table to bind all the textures at once.
 						const D3D12_DESCRIPTOR_RANGE1 pbrTextureRange[]{
@@ -977,11 +986,14 @@ int main()
 							},
 							// Point Lights Structured buffer
 							{
-								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_SRV,
-								.Descriptor {
-									.ShaderRegister = 0,
-									.RegisterSpace = 0,
-									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC,
+								/**
+								* Use DescriptorTable with SRV type instead of direct SRV binding to create BufferView in SRV Heap.
+								* This allows use to correctly call pointLights.GetDimensions() in HLSL.
+								*/
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = 1,
+									.pDescriptorRanges = &pointLightSRVRange
 								},
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
 							},
@@ -1117,7 +1129,7 @@ int main()
 						const D3D12_RASTERIZER_DESC raster{
 							.FillMode = D3D12_FILL_MODE_SOLID,
 							.CullMode = D3D12_CULL_MODE_BACK,
-							.FrontCounterClockwise = FALSE,
+							.FrontCounterClockwise = TRUE,
 							.DepthBias = D3D12_DEFAULT_DEPTH_BIAS,
 							.DepthBiasClamp = D3D12_DEFAULT_DEPTH_BIAS_CLAMP,
 							.SlopeScaledDepthBias = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS,
@@ -1507,7 +1519,8 @@ int main()
 					// RustedIron2 PBR
 					{
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSrvHeap->GetCPUDescriptorHandleForHeapStart();
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+						cpuHandle.ptr += srvOffset; // Add offset because first slot it for PointLightsBuffer.
 
 						// Albedo
 						{
@@ -1874,6 +1887,21 @@ int main()
 						SA_LOG(L"Sphere PointLight submit failed!", Error, DX12);
 						return EXIT_FAILURE;
 					}
+
+					// Create View
+					{
+						D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+							.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+							.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+							.Buffer{
+								.FirstElement = 0,
+								.NumElements = static_cast<UINT>(pointlightsUBO.size()),
+								.StructureByteStride = sizeof(PointLightUBO),
+							},
+						};
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+						device->CreateShaderResourceView(pointLightBuffer.Get(), &viewDesc, cpuHandle);
+					}
 				}
 
 				cmdLists[0]->Close();
@@ -2058,7 +2086,7 @@ int main()
 						* Bind heaps.
 						* /!\ Only one heaps of each type can be bound!
 						*/
-						ID3D12DescriptorHeap* descriptorHeaps[] = { pbrSrvHeap.Get() };
+						ID3D12DescriptorHeap* descriptorHeaps[] = { srvHeap.Get() };
 						cmd->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
 
 
@@ -2069,9 +2097,19 @@ int main()
 						cmd->SetGraphicsRootConstantBufferView(0, cameraBuffer->GetGPUVirtualAddress()); // Camera UBO
 						cmd->SetGraphicsRootConstantBufferView(1, objectBuffer->GetGPUVirtualAddress()); // Object UBO
 						
-						cmd->SetGraphicsRootShaderResourceView(2, pointLightBuffer->GetGPUVirtualAddress()); // PointLights
+						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+						D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = srvHeap->GetGPUDescriptorHandleForHeapStart();
 
-						cmd->SetGraphicsRootDescriptorTable(3, pbrSrvHeap->GetGPUDescriptorHandleForHeapStart()); // PBR
+						/**
+						* Use DescriptorTable with SRV type instead of direct SRV binding to create BufferView in SRV Heap.
+						* This allows use to correctly call pointLights.GetDimensions() in HLSL.
+						*/
+						//cmd->SetGraphicsRootShaderResourceView(2, pointLightBuffer->GetGPUVirtualAddress()); // PointLights
+						cmd->SetGraphicsRootDescriptorTable(2, gpuHandle); // PointLights
+						gpuHandle.ptr += srvOffset;
+
+						cmd->SetGraphicsRootDescriptorTable(3, gpuHandle); // PBR
+						gpuHandle.ptr += srvOffset;
 
 
 						cmd->SetPipelineState(litPipelineState.Get());
@@ -2166,7 +2204,6 @@ int main()
 						rustedIron2NormalTexture = nullptr;
 						rustedIron2MetallicTexture = nullptr;
 						rustedIron2RoughnessTexture = nullptr;
-						pbrSrvHeap = nullptr;
 					}
 				}
 
@@ -2204,6 +2241,7 @@ int main()
 				sceneRTViewHeap = nullptr;
 				sceneDepthRTViewHeap = nullptr;
 				sceneDepthTexture = nullptr;
+				srvHeap = nullptr;
 			}
 
 			// Commands
