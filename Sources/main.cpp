@@ -295,6 +295,8 @@ MComPtr<ID3D12Resource> rustedIron2AlbedoTexture;
 MComPtr<ID3D12Resource> rustedIron2NormalTexture;
 MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
 MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
+MComPtr<ID3D12DescriptorHeap> srvHeap;
+
 
 // Camera Buffer.
 struct CameraUBO
@@ -318,6 +320,18 @@ struct ObjectUBO
 constexpr SA::Vec3f spherePosition(0.5f, 0.0f, 2.0f);
 MComPtr<ID3D12Resource> objectBuffer;
 
+// PointLights Buffer.
+struct PointLightUBO
+{
+	SA::Vec3f position;
+
+	float intensity = 0.0f;
+
+	SA::Vec3f color;
+
+	float radius = 0.0f;
+};
+MComPtr<ID3D12Resource> pointLightBuffer;
 
 // -------------------- Helper Functions --------------------
 void WaitDeviceIdle()
@@ -783,6 +797,7 @@ int main()
 					}
 				}
 
+
 				// Depth Scene Texture
 				{
 					const D3D12_RESOURCE_DESC desc{
@@ -840,6 +855,23 @@ int main()
 					* Create Depth View to use sceneDepthTexture as a render target.
 					*/
 					device->CreateDepthStencilView(sceneDepthTexture.Get(), nullptr, sceneDepthRTViewHeap->GetCPUDescriptorHandleForHeapStart());
+				}
+
+
+				// SRV View Heap
+				{
+					D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+						.NumDescriptors = 5,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&srvHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create SRV ViewHeap failed.", Error, DX12);
+						return EXIT_FAILURE;
+					}
 				}
 			}
 
@@ -1469,6 +1501,8 @@ int main()
 
 					// RustedIron2 PBR
 					{
+						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
 						// Albedo
 						{
 							const char* path = "Resources/Textures/RustedIron2/rustediron2_basecolor.png";
@@ -1513,6 +1547,23 @@ int main()
 							}
 
 							stbi_image_free(inData);
+
+
+							// Create View
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Texture2D{
+										.MipLevels = 1,
+									},
+								};
+								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+								cpuHandle.ptr += 1 * srvOffset;
+
+								device->CreateShaderResourceView(rustedIron2AlbedoTexture.Get(), &viewDesc, cpuHandle);
+							}
 						}
 
 						// Normal Map
@@ -1559,6 +1610,23 @@ int main()
 							}
 
 							stbi_image_free(inData);
+
+
+							// Create View
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Texture2D{
+										.MipLevels = 1,
+									},
+								};
+								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+								cpuHandle.ptr += 2 * srvOffset;
+
+								device->CreateShaderResourceView(rustedIron2NormalTexture.Get(), &viewDesc, cpuHandle);
+							}
 						}
 
 						// Metallic
@@ -1605,6 +1673,23 @@ int main()
 							}
 
 							stbi_image_free(inData);
+
+
+							// Create View
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.Format = DXGI_FORMAT_R8_UNORM,
+									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Texture2D{
+										.MipLevels = 1,
+									},
+								};
+								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+								cpuHandle.ptr += 3 * srvOffset;
+
+								device->CreateShaderResourceView(rustedIron2MetallicTexture.Get(), &viewDesc, cpuHandle);
+							}
 						}
 
 						// Roughness
@@ -1651,6 +1736,23 @@ int main()
 							}
 
 							stbi_image_free(inData);
+
+
+							// Create View
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.Format = DXGI_FORMAT_R8_UNORM,
+									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Texture2D{
+										.MipLevels = 1,
+									},
+								};
+								D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+								cpuHandle.ptr += 4 * srvOffset;
+
+								device->CreateShaderResourceView(rustedIron2RoughnessTexture.Get(), &viewDesc, cpuHandle);
+							}
 						}
 					}
 				}
@@ -1722,6 +1824,72 @@ int main()
 					}
 				}
 
+
+				// PointLights Buffer
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = 2 * sizeof(PointLightUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&pointLightBuffer));
+					if (FAILED(hrBufferCreated))
+					{
+						SA_LOG(L"Create PointLight Buffer failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+
+					std::array<PointLightUBO, 2> pointlightsUBO{
+						PointLightUBO{
+							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
+							.intensity = 2.0f,
+							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
+							.radius = 3.0f
+						},
+						PointLightUBO{
+							.position = SA::Vec3f(0.75f, 1.0f, 1.0f),
+							.intensity = 4.0f,
+							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
+							.radius = 3.0f
+						}
+					};
+
+					const bool bSubmitSuccess = SubmitBufferToGPU(pointLightBuffer, desc.Width, pointlightsUBO.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Sphere PointLight submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+
+					// Create View
+					{
+						D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+							.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+							.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+							.Buffer{
+								.FirstElement = 0,
+								.NumElements = static_cast<UINT>(pointlightsUBO.size()),
+								.StructureByteStride = sizeof(PointLightUBO),
+							},
+						};
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = srvHeap->GetCPUDescriptorHandleForHeapStart();
+						device->CreateShaderResourceView(pointLightBuffer.Get(), &viewDesc, cpuHandle);
+					}
+				}
 
 				cmdLists[0]->Close();
 			}
@@ -1828,8 +1996,8 @@ int main()
 				}
 
 				// Update camera.
+				auto cameraBuffer = cameraBuffers[swapchainFrameIndex];
 				{
-					auto cameraBuffer = cameraBuffers[swapchainFrameIndex];
 
 					// Fill Data with updated values.
 					CameraUBO cameraUBO;
@@ -1996,6 +2164,11 @@ int main()
 				{
 					objectBuffer = nullptr;
 				}
+
+				// PointLight Buffer
+				{
+					pointLightBuffer = nullptr;
+				}
 			}
 
 			
@@ -2016,6 +2189,7 @@ int main()
 				sceneRTViewHeap = nullptr;
 				sceneDepthRTViewHeap = nullptr;
 				sceneDepthTexture = nullptr;
+				srvHeap = nullptr;
 			}
 
 			// Commands
