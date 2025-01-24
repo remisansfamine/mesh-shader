@@ -229,7 +229,7 @@ std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists;
 
 // Color Scene Texture
 constexpr DXGI_FORMAT sceneColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
-constexpr float sceneClearColor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+constexpr float sceneClearColor[] = { 0.0f, 0.1f, 0.2f, 1.0f };
 // Use Swapchain backbuffer texture as color output.
 MComPtr<ID3D12DescriptorHeap> sceneRTViewHeap;
 
