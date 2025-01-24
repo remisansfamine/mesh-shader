@@ -67,7 +67,7 @@ VertexOutput mainVS(VertexFactory _input)
 	//---------- Position ----------
 	const float4 worldPosition4 = mul(object.transform, float4(_input.position, 1.0));
 	output.worldPosition = worldPosition4.xyz / worldPosition4.w;
-	output.svPosition = mul(camera.invViewProj, float4(output.worldPosition, 1.0));
+	output.svPosition = mul(camera.invViewProj, worldPosition4);
 	output.viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);
 
 
