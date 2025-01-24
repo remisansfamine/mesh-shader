@@ -880,18 +880,19 @@ int main()
 			{
 #if SA_DEBUG
 				// Enable better shader debugging with the graphics debugging tools.
-				const UINT shaderCompileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+				const UINT shaderCompileFlags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #else
-				const UINT shaderCompileFlags = D3DCOMPILE_OPTIMIZATION_LEVEL3;
+				const UINT shaderCompileFlags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_OPTIMIZATION_LEVEL3;
 #endif
 
 				// Viewport & Scissor
 				{
+					// Flip viewport for upward Y-axis
 					viewport = D3D12_VIEWPORT{
 						.TopLeftX = 0,
-						.TopLeftY = 0,
+						.TopLeftY = float(windowSize.y),
 						.Width = float(windowSize.x),
-						.Height = float(windowSize.y),
+						.Height = -float(windowSize.y),
 						.MinDepth = 0.0f,
 						.MaxDepth = 1.0f,
 					};
@@ -1921,9 +1922,9 @@ int main()
 					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
 						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Up();
 					if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Forward();
-					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
 						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Forward();
+					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Forward();
 
 					double mouseX = 0.0f;
 					double mouseY = 0.0f;
@@ -1932,8 +1933,8 @@ int main()
 
 					if (mouseX != oldMouseX || mouseY != oldMouseY)
 					{
-						dx -= static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
-						dy += static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dx += static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dy -= static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
 
 						oldMouseX = mouseX;
 						oldMouseY = mouseY;
