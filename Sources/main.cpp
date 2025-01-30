@@ -21,6 +21,8 @@
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#include <stb_image_resize2.h>
 
 
 // Windowing
@@ -427,10 +429,8 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 	return true;
 }
 
-bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _height, int _channelNum, DXGI_FORMAT _format, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
+bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, uint32_t _channelNum, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
 {
-	const UINT64 size = static_cast<UINT64>(_width * _height * _channelNum);
-
 	// Create temp upload buffer.
 	MComPtr<ID3D12Resource> stagingBuffer;
 
@@ -441,7 +441,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 	const D3D12_RESOURCE_DESC desc{
 		.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 		.Alignment = 0,
-		.Width = size,
+		.Width = _totalSize,
 		.Height = 1,
 		.DepthOrArraySize = 1,
 		.MipLevels = 1,
@@ -464,39 +464,41 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 	void* data = nullptr;
 
 	stagingBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
-	std::memcpy(data, _data, size);
+	std::memcpy(data, _data, _totalSize);
 	stagingBuffer->Unmap(0, nullptr);
 
 
 	// Copy Buffer to texture
-	/**
-	* Copy Buffer to Texture
-	* Mipmaps are not handled here. For mipmapping:
-	*   - Generate Mipmaps
-	*   - Record one copy for each mips using src.Offset and dst.SubresourceIndex
-	*/
-	const D3D12_TEXTURE_COPY_LOCATION src{
-		.pResource = stagingBuffer.Get(),
-		.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
-		.PlacedFootprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT{
-			.Offset = 0, // currMipLevel
-			.Footprint = D3D12_SUBRESOURCE_FOOTPRINT{
-				.Format = _format,
-				.Width = static_cast<UINT>(_width),
-				.Height = static_cast<UINT>(_height),
-				.Depth = 1,
-				.RowPitch = static_cast<UINT>(_width * _channelNum),
+	const D3D12_RESOURCE_DESC resDesc = _gpuTexture->GetDesc();
+	UINT64 offset = 0u;
+
+	for (UINT16 i = 0; i < resDesc.MipLevels; ++i)
+	{
+		const D3D12_TEXTURE_COPY_LOCATION src{
+			.pResource = stagingBuffer.Get(),
+			.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT,
+			.PlacedFootprint = D3D12_PLACED_SUBRESOURCE_FOOTPRINT{
+				.Offset = offset,
+				.Footprint = D3D12_SUBRESOURCE_FOOTPRINT{
+					.Format = resDesc.Format,
+					.Width = _extents[i].x,
+					.Height = _extents[i].y,
+					.Depth = 1,
+					.RowPitch = _extents[i].x * _channelNum,
+				}
 			}
-		}
-	};
+		};
 
-	const D3D12_TEXTURE_COPY_LOCATION dst{
-		.pResource = _gpuTexture.Get(),
-		.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
-		.SubresourceIndex = 0 // currMipLevel
-	};
+		const D3D12_TEXTURE_COPY_LOCATION dst{
+			.pResource = _gpuTexture.Get(),
+			.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX,
+			.SubresourceIndex = i // currMipLevel
+		};
 
-	cmdLists[0]->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+		cmdLists[0]->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+
+		offset += _extents[i].x * _extents[i].y * _channelNum;
+	}
 
 
 	// Resource transition to final state.
@@ -531,6 +533,68 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, int _width, int _he
 	return true;
 }
 
+void GenerateMipMaps(SA::Vec2ui _extent, std::vector<char>& _data, uint32_t& _outMipLevels, uint32_t& _outTotalSize, std::vector<SA::Vec2ui>& _outExtents, uint32_t _channelNum, uint32_t _layerNum = 1u)
+{
+	_outMipLevels = static_cast<uint32_t>(std::floor(std::log2(max(_extent.x, _extent.y)))) + 1;
+
+	_outExtents.resize(_outMipLevels);
+
+	// Compute Total Size & extents
+	{
+		for (uint32_t i = 0u; i < _outMipLevels; ++i)
+		{
+			_outExtents[i] = _extent;
+
+			_outTotalSize += _extent.x * _extent.y * _channelNum * _layerNum * sizeof(stbi_uc);
+
+			if (_extent.x > 1)
+				_extent.x >>= 1;
+
+			if (_extent.y > 1)
+				_extent.y >>= 1;
+		}
+	}
+
+
+	_data.resize(_outTotalSize);
+
+
+	// Generate
+	{
+		unsigned char* src = reinterpret_cast<unsigned char*>(_data.data());
+
+		for (uint32_t i = 1u; i < _outMipLevels; ++i)
+		{
+			uint64_t srcLayerOffset = _outExtents[i - 1].x * _outExtents[i - 1].y * _channelNum * sizeof(stbi_uc);
+			uint64_t currLayerOffset = _outExtents[i].x * _outExtents[i].y * _channelNum * sizeof(stbi_uc);
+			unsigned char* dst = src + srcLayerOffset * _layerNum;
+
+			for (uint32_t j = 0; j < _layerNum; ++j)
+			{
+				bool res = stbir_resize_uint8_linear(
+					src,
+					static_cast<int32_t>(_outExtents[i - 1].x),
+					static_cast<int32_t>(_outExtents[i - 1].y),
+					0,
+					dst,
+					static_cast<int32_t>(_outExtents[i].x),
+					static_cast<int32_t>(_outExtents[i].y),
+					0,
+					static_cast<stbir_pixel_layout>(_channelNum)
+				);
+
+				if (!res)
+				{
+					SA_LOG(L"Mip map creation failed!", Error, STB);
+					return;
+				}
+
+				dst += currLayerOffset;
+				src += srcLayerOffset;
+			}
+		}
+	}
+}
 
 int main()
 {
@@ -1008,7 +1072,7 @@ int main()
 						};
 
 						const D3D12_STATIC_SAMPLER_DESC sampler{
-							.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+							.Filter = D3D12_FILTER_ANISOTROPIC,
 							.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP,
 							.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP,
 							.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP,
@@ -1526,12 +1590,28 @@ int main()
 							const char* path = "Resources/Textures/RustedIron2/rustediron2_basecolor.png";
 
 							int width, height, channels;
-							uint8_t* inData = stbi_load(path, &width, &height, &channels, 4);
+							char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 4));
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
 								return EXIT_FAILURE;
 							}
+
+							std::vector<char> data(inData, inData + width * height * channels);
+
+							uint32_t mipLevels = 0u;
+							uint32_t totalSize = 0u;
+							std::vector<SA::Vec2ui> mipExtents;
+							GenerateMipMaps(
+								SA::Vec2ui{
+									static_cast<uint32_t>(width),
+									static_cast<uint32_t>(height)
+								},
+								data,
+								mipLevels,
+								totalSize,
+								mipExtents,
+								channels);
 
 							const D3D12_HEAP_PROPERTIES heap{
 								.Type = D3D12_HEAP_TYPE_DEFAULT,
@@ -1543,8 +1623,8 @@ int main()
 								.Width = static_cast<uint32_t>(width),
 								.Height = static_cast<uint32_t>(height),
 								.DepthOrArraySize = 1,
-								.MipLevels = 1,
-								.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+								.MipLevels = static_cast<UINT16>(mipLevels),
+								.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 								.SampleDesc = {.Count = 1, .Quality = 0 },
 								.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
 								.Flags = D3D12_RESOURCE_FLAG_NONE,
@@ -1557,7 +1637,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoTexture, width, height, channels, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Albedo Texture submit failed!", Error, DX12);
@@ -1570,11 +1650,11 @@ int main()
 							// Create View
 							{
 								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
-									.Format = DXGI_FORMAT_R8G8B8A8_UNORM_SRGB,
+									.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Texture2D{
-										.MipLevels = 1,
+										.MipLevels = mipLevels,
 									},
 								};
 
@@ -1588,12 +1668,29 @@ int main()
 							const char* path = "Resources/Textures/RustedIron2/rustediron2_normal.png";
 
 							int width, height, channels;
-							uint8_t* inData = stbi_load(path, &width, &height, &channels, 4);
+							char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 4));
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
 								return EXIT_FAILURE;
 							}
+							channels = 4; // must force channels to 4 (format is RGBA).
+
+							std::vector<char> data(inData, inData + width * height * channels);
+
+							uint32_t mipLevels = 0u;
+							uint32_t totalSize = 0u;
+							std::vector<SA::Vec2ui> mipExtents;
+							GenerateMipMaps(
+								SA::Vec2ui{
+									static_cast<uint32_t>(width),
+									static_cast<uint32_t>(height)
+								},
+								data,
+								mipLevels,
+								totalSize,
+								mipExtents,
+								channels);
 
 							const D3D12_HEAP_PROPERTIES heap{
 								.Type = D3D12_HEAP_TYPE_DEFAULT,
@@ -1605,7 +1702,7 @@ int main()
 								.Width = static_cast<uint32_t>(width),
 								.Height = static_cast<uint32_t>(height),
 								.DepthOrArraySize = 1,
-								.MipLevels = 1,
+								.MipLevels = static_cast<UINT16>(mipLevels),
 								.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
 								.SampleDesc = {.Count = 1, .Quality = 0 },
 								.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
@@ -1616,10 +1713,10 @@ int main()
 							if (FAILED(hrBufferCreated))
 							{
 								SA_LOG(L"Create RustedIron2 Normal Texture failed!", Error, DX12);
-								return 1;
+								return EXIT_FAILURE;
 							}
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalTexture, width, height, 4, DXGI_FORMAT_R8G8B8A8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Normal Texture submit failed!", Error, DX12);
@@ -1636,9 +1733,10 @@ int main()
 									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Texture2D{
-										.MipLevels = 1,
+										.MipLevels = mipLevels,
 									},
 								};
+
 								device->CreateShaderResourceView(rustedIron2NormalTexture.Get(), &viewDesc, cpuHandle);
 								cpuHandle.ptr += srvOffset;
 							}
@@ -1649,12 +1747,28 @@ int main()
 							const char* path = "Resources/Textures/RustedIron2/rustediron2_metallic.png";
 
 							int width, height, channels;
-							uint8_t* inData = stbi_load(path, &width, &height, &channels, 1);
+							char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 1));
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
 								return EXIT_FAILURE;
 							}
+
+							std::vector<char> data(inData, inData + width * height * channels);
+
+							uint32_t mipLevels = 0u;
+							uint32_t totalSize = 0u;
+							std::vector<SA::Vec2ui> mipExtents;
+							GenerateMipMaps(
+								SA::Vec2ui{
+									static_cast<uint32_t>(width),
+									static_cast<uint32_t>(height)
+								},
+								data,
+								mipLevels,
+								totalSize,
+								mipExtents,
+								channels);
 
 							const D3D12_HEAP_PROPERTIES heap{
 								.Type = D3D12_HEAP_TYPE_DEFAULT,
@@ -1666,7 +1780,7 @@ int main()
 								.Width = static_cast<uint32_t>(width),
 								.Height = static_cast<uint32_t>(height),
 								.DepthOrArraySize = 1,
-								.MipLevels = 1,
+								.MipLevels = static_cast<UINT16>(mipLevels),
 								.Format = DXGI_FORMAT_R8_UNORM,
 								.SampleDesc = {.Count = 1, .Quality = 0 },
 								.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
@@ -1680,7 +1794,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Metallic Texture submit failed!", Error, DX12);
@@ -1697,7 +1811,7 @@ int main()
 									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Texture2D{
-										.MipLevels = 1,
+										.MipLevels = mipLevels,
 									},
 								};
 
@@ -1711,12 +1825,28 @@ int main()
 							const char* path = "Resources/Textures/RustedIron2/rustediron2_roughness.png";
 
 							int width, height, channels;
-							uint8_t* inData = stbi_load(path, &width, &height, &channels, 1);
+							char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 1));
 							if (!inData)
 							{
 								SA_LOG(L"STBI Texture Loading failed", Error, STB, path);
 								return EXIT_FAILURE;
 							}
+
+							std::vector<char> data(inData, inData + width * height * channels);
+
+							uint32_t mipLevels = 0u;
+							uint32_t totalSize = 0u;
+							std::vector<SA::Vec2ui> mipExtents;
+							GenerateMipMaps(
+								SA::Vec2ui{
+									static_cast<uint32_t>(width),
+									static_cast<uint32_t>(height)
+								},
+								data,
+								mipLevels,
+								totalSize,
+								mipExtents,
+								channels);
 
 							const D3D12_HEAP_PROPERTIES heap{
 								.Type = D3D12_HEAP_TYPE_DEFAULT,
@@ -1728,7 +1858,7 @@ int main()
 								.Width = static_cast<uint32_t>(width),
 								.Height = static_cast<uint32_t>(height),
 								.DepthOrArraySize = 1,
-								.MipLevels = 1,
+								.MipLevels = static_cast<UINT16>(mipLevels),
 								.Format = DXGI_FORMAT_R8_UNORM,
 								.SampleDesc = {.Count = 1, .Quality = 0 },
 								.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
@@ -1742,7 +1872,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessTexture, width, height, channels, DXGI_FORMAT_R8_UNORM, inData, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Roughness Texture submit failed!", Error, DX12);
@@ -1759,7 +1889,7 @@ int main()
 									.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D,
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Texture2D{
-										.MipLevels = 1,
+										.MipLevels = mipLevels,
 									},
 								};
 
