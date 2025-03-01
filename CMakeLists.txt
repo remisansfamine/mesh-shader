@@ -14,28 +14,44 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}/libs")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}")
 
 
-# Create executable target.
-file(GLOB_RECURSE SOURCES_PRIVATE "Sources/*.hpp" "Sources/*.cpp")
-add_executable(FromVulkanToDirectX12 ${SOURCES_PRIVATE})
 
-target_compile_features(FromVulkanToDirectX12 PUBLIC c_std_11)
-target_compile_features(FromVulkanToDirectX12 PUBLIC cxx_std_20)
-target_compile_options(FromVulkanToDirectX12 PRIVATE /W4 /WX)
+# Target mainDX12
+add_executable(FVTDX12_mainDX12 "Sources/mainDX12.cpp")
 
+target_compile_features(FVTDX12_mainDX12 PRIVATE c_std_11 cxx_std_20)
+target_compile_options(FVTDX12_mainDX12 PRIVATE /W4 /WX)
 
-# Link libraries
-target_link_libraries(FromVulkanToDirectX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
-target_link_libraries(FromVulkanToDirectX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
+target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
+target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
 
-
-# Copy resources dir command.
 add_custom_command(
-    TARGET FromVulkanToDirectX12
+    TARGET FVTDX12_mainDX12
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/Resources
-    $<TARGET_FILE_DIR:FromVulkanToDirectX12>/Resources
+    $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources
 )
+
+
+
+# Target mainVK
+add_executable(FVTDX12_mainVK "Sources/mainVK.cpp")
+
+target_compile_features(FVTDX12_mainVK PRIVATE c_std_11 cxx_std_20)
+target_compile_options(FVTDX12_mainVK PRIVATE /W4 /WX)
+
+find_package(Vulkan REQUIRED)
+target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan)
+target_link_libraries(FVTDX12_mainVK PUBLIC glfw assimp stb SA_Logger SA_Maths)
+
+add_custom_command(
+    TARGET FVTDX12_mainVK
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/Resources
+    $<TARGET_FILE_DIR:FVTDX12_mainVK>/Resources
+)
+
 
 
 # ThirdParty

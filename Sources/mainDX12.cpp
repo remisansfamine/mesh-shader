@@ -1126,7 +1126,7 @@ int main()
 					{
 						MComPtr<ID3DBlob> errors;
 
-						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/LitShader.hlsl", nullptr, nullptr, "mainVS", "vs_5_0", shaderCompileFlags, 0, &litVertexShader, &errors);
+						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainVS", "vs_5_0", shaderCompileFlags, 0, &litVertexShader, &errors);
 
 						if (FAILED(hrCompileShader))
 						{
@@ -1141,7 +1141,7 @@ int main()
 					{
 						MComPtr<ID3DBlob> errors;
 
-						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/LitShader.hlsl", nullptr, nullptr, "mainPS", "ps_5_0", shaderCompileFlags, 0, &litPixelShader, &errors);
+						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainPS", "ps_5_0", shaderCompileFlags, 0, &litPixelShader, &errors);
 
 						if (FAILED(hrCompileShader))
 						{

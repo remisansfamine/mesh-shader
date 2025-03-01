@@ -1,12 +1,12 @@
 [submodule "ThirdParty/glfw"]
 	path = ThirdParty/glfw
 	url = https://github.com/glfw/glfw.git
+[submodule "ThirdParty/assimp"]
+	path = ThirdParty/assimp
+	url = https://github.com/assimp/assimp
 [submodule "ThirdParty/SA/Logger"]
 	path = ThirdParty/SA/Logger
 	url = https://github.com/SapphireSuite/Logger.git
 [submodule "ThirdParty/SA/Maths"]
 	path = ThirdParty/SA/Maths
 	url = https://github.com/SapphireSuite/Maths.git
-[submodule "ThirdParty/assimp"]
-	path = ThirdParty/assimp
-	url = https://github.com/assimp/assimp
