@@ -136,18 +136,41 @@ VkSurfaceKHR windowSurface = VK_NULL_HANDLE;
 
 // === Device ===
 
+struct QueueFamilyIndices
+{
+	uint32_t graphicsFamily = uint32_t(-1);
+	//uint32_t computeFamily = uint32_t(-1);
+	uint32_t presentFamily = uint32_t(-1);
+};
+
+VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+QueueFamilyIndices deviceQueueFamilyIndices;
+
 const std::vector<const char*> vkDeviceReqExts{
 	VK_KHR_SWAPCHAIN_EXTENSION_NAME
 };
 
-VkPhysicalDevice physicalDevice = VK_NULL_HANDLE; // VkPhysicalDevice -> IDXGIAdapter
-VkDevice device = VK_NULL_HANDLE; // VkDevice -> ID3D12Device
+VkDevice device = VK_NULL_HANDLE;
 
 VkQueue graphicsQueue = VK_NULL_HANDLE;
 //VkQueue computeQueue = VK_NULL_HANDLE;
 VkQueue presentQueue = VK_NULL_HANDLE;
 
 
+// === Swapchain ===
+
+constexpr uint32_t bufferingCount = 3;
+
+VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+std::array<VkImage, bufferingCount> swapchainImages;
+
+struct SwapchainSynchronisation
+{
+	VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
+	VkSemaphore presentSemaphore = VK_NULL_HANDLE;
+	VkFence		fence = VK_NULL_HANDLE;
+};
+std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs;
 
 int main()
 {
@@ -167,6 +190,10 @@ int main()
 			{
 				SA_LOG(L"GLFW create window failed!", Error, GLFW);
 				return EXIT_FAILURE;
+			}
+			else
+			{
+				SA_LOG("GLFW create window success.", Info, GLFW, window);
 			}
 
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -199,7 +226,7 @@ int main()
 					.apiVersion = VK_API_VERSION_1_2,
 				};
 
-				VkInstanceCreateInfo instanceInfo{
+				VkInstanceCreateInfo instanceCreateInfo{
 					.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 					.pNext = nullptr,
 					.flags = 0u,
@@ -260,17 +287,21 @@ int main()
 					.pUserData = nullptr,
 				};
 
-				instanceInfo.pNext = &debugUtilsInfo;
+				instanceCreateInfo.pNext = &debugUtilsInfo;
 
-				instanceInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
-				instanceInfo.ppEnabledLayerNames = validationLayers.data();
+				instanceCreateInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+				instanceCreateInfo.ppEnabledLayerNames = validationLayers.data();
 #endif
 
-				const VkResult vrInstanceCreated = vkCreateInstance(&instanceInfo, nullptr, &instance);
+				const VkResult vrInstanceCreated = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 				if (vrInstanceCreated != VK_SUCCESS)
 				{
 					SA_LOG(L"Create VkInstance failed!", Error, VK, vrInstanceCreated);
 					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG("Create VkInstance success.", Info, GLFW, instance);
 				}
 			}
 
@@ -281,19 +312,21 @@ int main()
 				* Create Vulkan Surface from GLFW window.
 				* Required to create PresentQueue in Device.
 				*/
-				glfwCreateWindowSurface(instance, window, nullptr, &windowSurface);
+				const VkResult vrWindowSurfaceCreated = glfwCreateWindowSurface(instance, window, nullptr, &windowSurface);
+				if (vrWindowSurfaceCreated != VK_SUCCESS)
+				{
+					SA_LOG(L"Create Window Surafce failed!", Error, VK, vrWindowSurfaceCreated);
+					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG("Create Window Surafce success.", Info, GLFW, windowSurface);
+				}
 			}
+
 
 			// Device
 			{
-				struct QueueFamilyIndices
-				{
-					uint32_t graphicsFamily = uint32_t(-1);
-					//uint32_t computeFamily = uint32_t(-1);
-					uint32_t presentFamily = uint32_t(-1);
-				};
-
-
 				// Query physical devices
 				uint32_t deviceCount = 0;
 				const VkResult vrEnumPhysDeviceCount = vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
@@ -318,7 +351,6 @@ int main()
 
 
 				// Find first suitable device (no scoring).
-				QueueFamilyIndices physicalDeviceQueueFamilies;
 				for (auto& currPhysicalDevice : physicalDevices)
 				{
 					// Check extensions support
@@ -413,7 +445,7 @@ int main()
 							currPhysicalDeviceQueueFamilies.presentFamily == uint32_t(-1))
 							continue;  // go to next device.
 
-						physicalDeviceQueueFamilies = currPhysicalDeviceQueueFamilies;
+						deviceQueueFamilyIndices = currPhysicalDeviceQueueFamilies;
 					}
 
 					physicalDevice = currPhysicalDevice;
@@ -424,6 +456,10 @@ int main()
 				{
 					SA_LOG(L"No suitable PhysicalDevice found.", Error, VK);
 					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG(L"Create Physical Device success", Info, VK, physicalDevice);
 				}
 
 
@@ -436,7 +472,7 @@ int main()
 						.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 						.pNext = nullptr,
 						.flags = 0,
-						.queueFamilyIndex = physicalDeviceQueueFamilies.graphicsFamily,
+						.queueFamilyIndex = deviceQueueFamilyIndices.graphicsFamily,
 						.queueCount = 1,
 						.pQueuePriorities = &queuePriority,
 					},
@@ -444,7 +480,7 @@ int main()
 					//	.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 					//	.pNext = nullptr,
 					//	.flags = 0,
-					//	.queueFamilyIndex = physicalDeviceQueueFamilies.computeFamily,
+					//	.queueFamilyIndex = deviceQueueFamilyIndices.computeFamily,
 					//	.queueCount = 1,
 					//	.pQueuePriorities = &queuePriority,
 					//},
@@ -452,7 +488,7 @@ int main()
 						.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
 						.pNext = nullptr,
 						.flags = 0,
-						.queueFamilyIndex = physicalDeviceQueueFamilies.presentFamily,
+						.queueFamilyIndex = deviceQueueFamilyIndices.presentFamily,
 						.queueCount = 1,
 						.pQueuePriorities = &queuePriority,
 					}
@@ -484,12 +520,233 @@ int main()
 					SA_LOG(L"Create Logical Device failed.", Error, VK, vrDeviceCreated);
 					return EXIT_FAILURE;
 				}
+				else
+				{
+					SA_LOG(L"Create Logical Device success.", Info, VK, device);
+				}
 
 
 				// Create Queues
-				vkGetDeviceQueue(device, physicalDeviceQueueFamilies.graphicsFamily, 0, &graphicsQueue);
-				//vkGetDeviceQueue(device, physicalDeviceQueueFamilies.presentFamily, 0, &computeQueue);
-				vkGetDeviceQueue(device, physicalDeviceQueueFamilies.presentFamily, 0, &presentQueue);
+				vkGetDeviceQueue(device, deviceQueueFamilyIndices.graphicsFamily, 0, &graphicsQueue);
+				SA_LOG(L"Create Graphics Queue success.", Info, VK, graphicsQueue);
+
+				//vkGetDeviceQueue(device, deviceQueueFamilyIndices.computeFamily, 0, &computeQueue);
+				//SA_LOG(L"Create Compute Queue success.", Info, VK, computeQueue);
+
+				vkGetDeviceQueue(device, deviceQueueFamilyIndices.presentFamily, 0, &presentQueue);
+				SA_LOG(L"Create Present Queue success.", Info, VK, presentQueue);
+			}
+
+
+			// Swapchain
+			{
+				// Query Support Details
+				VkSurfaceCapabilitiesKHR capabilities;
+				std::vector<VkSurfaceFormatKHR> formats;
+				std::vector<VkPresentModeKHR> presentModes;
+				{
+					// Capabilities
+					const VkResult vrGetSurfaceCapabilities = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, windowSurface, &capabilities);
+					if (vrGetSurfaceCapabilities != VK_SUCCESS)
+					{
+						SA_LOG(L"Get Physical Device Surface Capabilities failed!", Error, VK);
+						return EXIT_FAILURE;
+					}
+
+
+					// Formats
+					uint32_t formatCount = 0u;
+					const VkResult vrGetSurfaceFormatsCount = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface, &formatCount, nullptr);
+					if (vrGetSurfaceFormatsCount != VK_SUCCESS)
+					{
+						SA_LOG(L"Get Physical Device Surface Formats Count failed!", Error, VK);
+						return EXIT_FAILURE;
+					}
+					if (formatCount == 0)
+					{
+						SA_LOG(L"No physical device surface formats found!", Error, VK);
+						return EXIT_FAILURE;
+					}
+
+					formats.resize(formatCount);
+					const VkResult vrGetSurfaceFormats = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface, &formatCount, formats.data());
+					if (vrGetSurfaceFormats != VK_SUCCESS)
+					{
+						SA_LOG(L"Get Physical Device Surface Formats failed!", Error, VK);
+						return EXIT_FAILURE;
+					}
+
+
+					// Present modes
+					uint32_t presentModeCount = 0u;
+					const VkResult vrGetSurfacePresentCount = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface, &presentModeCount, nullptr);
+					if (vrGetSurfacePresentCount != VK_SUCCESS)
+					{
+						SA_LOG(L"Get Physical Device Surface PresentModes Count failed!", Error, VK);
+						return EXIT_FAILURE;
+					}
+					if (presentModeCount == 0)
+					{
+						SA_LOG(L"No physical device present modes found!", Error, VK);
+						return EXIT_FAILURE;
+					}
+
+					presentModes.resize(presentModeCount);
+					const VkResult vrGetSurfacePresent = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface, &presentModeCount, presentModes.data());
+					if (vrGetSurfacePresent != VK_SUCCESS)
+					{
+						SA_LOG(L"Get Physical Device Surface present modes failed!", Error, VK);
+						return EXIT_FAILURE;
+					}
+				}
+
+				// ChooseSwapSurfaceFormat
+				VkSurfaceFormatKHR swapchainFormat = formats[0];
+				{
+					// Find prefered
+					for (uint32_t i = 0; i < formats.size(); ++i)
+					{
+						if (formats[i].format == VK_FORMAT_B8G8R8A8_SRGB && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+						{
+							swapchainFormat = formats[i];
+							break;
+						}
+					}
+				}
+
+				// ChooseSwapPresentMode
+				VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR; // Default FIFO always supported.
+				{
+					// Find prefered.
+					for (uint32_t i = 0; i < presentModes.size(); ++i)
+					{
+						if (presentModes[i] == VK_PRESENT_MODE_MAILBOX_KHR)
+						{
+							swapchainPresentMode = presentModes[i];
+							break;
+						}
+					}
+				}
+
+				
+				VkSharingMode swapchainImageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+
+				// Provide queue Family indices.
+				std::array<uint32_t, 2> queueFamilyIndices{
+					deviceQueueFamilyIndices.graphicsFamily,
+					deviceQueueFamilyIndices.presentFamily,
+				};
+
+				// Graphic and present familiy are different.
+				if (queueFamilyIndices[0] != queueFamilyIndices[1])
+					swapchainImageSharingMode = VK_SHARING_MODE_CONCURRENT;
+
+
+				const VkSwapchainCreateInfoKHR swapchainCreateInfo{
+					.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+					.pNext = nullptr,
+					.flags = 0u,
+					.surface = windowSurface,
+					.minImageCount = bufferingCount,
+					.imageFormat = swapchainFormat.format,
+					.imageColorSpace = swapchainFormat.colorSpace,
+					.imageExtent = VkExtent2D{ windowSize.x, windowSize.y },
+					.imageArrayLayers = 1u,
+					.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+					.imageSharingMode = swapchainImageSharingMode,
+					.queueFamilyIndexCount = static_cast<uint32_t>(queueFamilyIndices.size()),
+					.pQueueFamilyIndices = queueFamilyIndices.data(),
+					.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+					.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+					.presentMode = swapchainPresentMode,
+					.clipped = VK_TRUE,
+					.oldSwapchain = VK_NULL_HANDLE,
+				};
+
+				const VkResult vrSwapchainCreated = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain);
+				if (vrSwapchainCreated != VK_SUCCESS)
+				{
+					SA_LOG("Create Swapchain failed!", Error, VK);
+					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG("Create Swapchain success.", Info, VK, swapchain);
+				}
+
+
+				// Query backbuffer images.
+				uint32_t swapchainImageNum = bufferingCount;
+				const VkResult vrGetSwapchainImages = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageNum, swapchainImages.data());
+				if (vrGetSwapchainImages != VK_SUCCESS || swapchainImageNum != bufferingCount)
+				{
+					SA_LOG(L"Get Swapchain Images failed!", Error, VK, vrGetSwapchainImages);
+					return EXIT_FAILURE;
+				}
+				else
+				{
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						SA_LOG(L"Created Swapchain backbuffer images success.", Info, VK, swapchainImages[i]);
+					}
+				}
+
+
+				// Synchronization
+				{
+					VkSemaphoreCreateInfo semaphoreCreateInfo{};
+					semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+					semaphoreCreateInfo.pNext = nullptr;
+					semaphoreCreateInfo.flags = 0u;
+
+					VkFenceCreateInfo fenceCreateInfo{};
+					fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+					fenceCreateInfo.pNext = nullptr;
+					fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						// Acquire Semaphore
+						const VkResult vrAcqSemaphoreCreated = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &swapchainSyncs[i].acquireSemaphore);
+						if (vrAcqSemaphoreCreated != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Swapchain Acquire Semaphore [%1] failed!", i), Error, VK, vrAcqSemaphoreCreated);
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Swapchain Acquire Semaphore [%1] success", i), Info, VK, swapchainSyncs[i].acquireSemaphore);
+							;
+						}
+
+
+						// Present Semaphore
+						const VkResult vrPresSemaphoreCreated = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &swapchainSyncs[i].presentSemaphore);
+						if (vrPresSemaphoreCreated != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Swapchain Present Semaphore [%1] failed!", i), Error, VK, vrPresSemaphoreCreated);
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Swapchain Present Semaphore [%1] success", i), Info, VK, swapchainSyncs[i].presentSemaphore);
+						}
+
+
+						// Fence
+						const VkResult vrFenceCreated = vkCreateFence(device, &fenceCreateInfo, nullptr, &swapchainSyncs[i].fence);
+						if (vrFenceCreated != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Swapchain Fence [%1] failed!", i), Error, VK, vrFenceCreated);
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Swapchain Fence [%1] success", i), Info, VK, swapchainSyncs[i].fence);
+						}
+					}
+				}
 			}
 		}
 	}
@@ -506,13 +763,56 @@ int main()
 	{
 		// Renderer
 		{
+			// Swapchain
+			{
+				// Synchronization
+				{
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						vkDestroySemaphore(device, swapchainSyncs[i].acquireSemaphore, nullptr);
+						SA_LOG((L"Destroy Swapchain Acquire Semaphore [%1] success", i), Info, VK, swapchainSyncs[i].acquireSemaphore);
+						swapchainSyncs[i].acquireSemaphore = VK_NULL_HANDLE;
+
+						vkDestroySemaphore(device, swapchainSyncs[i].presentSemaphore, nullptr);
+						SA_LOG((L"Destroy Swapchain Present Semaphore [%1] success", i), Info, VK, swapchainSyncs[i].presentSemaphore);
+						swapchainSyncs[i].presentSemaphore = VK_NULL_HANDLE;
+
+						vkDestroyFence(device, swapchainSyncs[i].fence, nullptr);
+						SA_LOG((L"Destroy Swapchain Fence [%1] success", i), Info, VK, swapchainSyncs[i].fence);
+						swapchainSyncs[i].fence = VK_NULL_HANDLE;
+					}
+				}
+
+				// Backbuffers
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					// Do not destroy swapchain images manually, they are already attached to VkSwapchain lifetime.
+
+					SA_LOG((L"Destroy Swapchain backbuffer image [%1] success", i), Info, VK, swapchainImages[i]);
+					swapchainImages[i] = VK_NULL_HANDLE;
+				}
+
+				vkDestroySwapchainKHR(device, swapchain, nullptr);
+				SA_LOG(L"Destroy Swapchain success", Info, VK, swapchain);
+				swapchain = VK_NULL_HANDLE;
+			}
+
 			// Device
 			{
+				SA_LOG(L"Destroy Graphics Queue success", Info, VK, graphicsQueue);
 				graphicsQueue = VK_NULL_HANDLE;
+
+				//SA_LOG(L"Destroy Compute Queue success", Info, VK, computeQueue);
 				//computeQueue = VK_NULL_HANDLE;
+
+				SA_LOG(L"Destroy Present Queue success", Info, VK, presentQueue);
 				presentQueue = VK_NULL_HANDLE;
 
 				vkDestroyDevice(device, nullptr);
+				SA_LOG(L"Destroy Logical Device success", Info, VK, device);
+				device = VK_NULL_HANDLE;
+
+				SA_LOG(L"Destroy Physical Device success", Info, VK, physicalDevice);
 				physicalDevice = VK_NULL_HANDLE;
 			}
 
@@ -520,12 +820,16 @@ int main()
 			// Surface
 			{
 				vkDestroySurfaceKHR(instance, windowSurface, nullptr);
+				SA_LOG(L"Destroy Window Surface success", Info, VK, windowSurface);
+				windowSurface = VK_NULL_HANDLE;
 			}
 
 
 			// Instance
 			{
 				vkDestroyInstance(instance, nullptr);
+				SA_LOG(L"Destroy Instance success", Info, VK, instance);
+				instance = VK_NULL_HANDLE;
 			}
 		}
 

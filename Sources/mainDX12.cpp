@@ -197,6 +197,41 @@ void WaitDeviceIdle()
 }
 
 
+// === Swapchain ===
+
+constexpr uint32_t bufferingCount = 3;
+
+MComPtr<IDXGISwapChain3> swapchain; // VkSwapchainKHR -> IDXGISwapChain
+std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages; // VkImage -> ID3D12Resource
+uint32_t swapchainFrameIndex = 0u;
+
+/**
+* Vulkan uses Semaphores and Fences for swapchain synchronization
+* 1 Fence and 1 Semaphore are used PER FRAME.
+*
+*
+* DirectX12 uses fence and Windows event.
+* Only 1 Frame and 1 Windows Event are used FOR ALL FRAME, with different Values (one PER FRAME).
+* See DirectX-Graphics-Samples/D3D12HelloFrameBuffering Sample for reference.
+*/
+HANDLE swapchainFenceEvent;
+MComPtr<ID3D12Fence> swapchainFence;
+std::array<uint32_t, bufferingCount> swapchainFenceValues;
+
+
+// === Scene Textures ===
+
+// = Color =
+constexpr DXGI_FORMAT sceneColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+constexpr float sceneClearColor[] = { 0.0f, 0.1f, 0.2f, 1.0f };
+// Use Swapchain backbuffer texture as color output.
+
+// = Depth =
+constexpr DXGI_FORMAT sceneDepthFormat = DXGI_FORMAT_D16_UNORM;
+constexpr D3D12_CLEAR_VALUE sceneDepthClearValue{ .Format = sceneDepthFormat, .DepthStencil = { 1.0f, 0 } };
+MComPtr<ID3D12Resource> sceneDepthTexture;
+
+
 
 int main()
 {
@@ -372,7 +407,90 @@ int main()
 					}
 					else
 					{
-						SA_LOG(L"Create Device Fence success.", Info, DX12);
+						const LPCWSTR name = L"DeviceFence";
+						deviceFence->SetName(name);
+
+						SA_LOG(L"Create Swapchain Fence success.", Info, DX12, (L"\"%1\" [%2]", name, deviceFence.Get()));
+					}
+				}
+			}
+
+
+			// Swapchain
+			{
+				const DXGI_SWAP_CHAIN_DESC1 desc{
+					.Width = windowSize.x,
+					.Height = windowSize.y,
+					.Format = sceneColorFormat,
+					.Stereo = false,
+					.SampleDesc = {.Count = 1, .Quality = 0 },
+					.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+					.BufferCount = bufferingCount,
+					.Scaling = DXGI_SCALING_STRETCH,
+					.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,
+					.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED,
+					.Flags = 0,
+				};
+
+				MComPtr<IDXGISwapChain1> swapchain1;
+				const HRESULT hrSwapChainCreated = factory->CreateSwapChainForHwnd(graphicsQueue.Get(), glfwGetWin32Window(window), &desc, nullptr, nullptr, &swapchain1);
+				if (FAILED(hrSwapChainCreated))
+				{
+					SA_LOG(L"Create Swapchain failed!", Error, DX12);
+					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG(L"Create Swapchain success.", Info, DX12, swapchain1.Get());
+				}
+
+				const HRESULT hrSwapChainCast = swapchain1.As(&swapchain);
+				if (FAILED(hrSwapChainCast))
+				{
+					SA_LOG(L"Swapchain cast failed!", Error, DX12);
+					return EXIT_FAILURE;
+				}
+
+
+				// Synchronization
+				{
+					swapchainFenceEvent = CreateEvent(nullptr, false, false, nullptr);
+					if (!swapchainFenceEvent)
+					{
+						SA_LOG(L"Create Swapchain Fence Event failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					const HRESULT hrSwapChainFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapchainFence));
+					if (FAILED(hrSwapChainFenceCreated))
+					{
+						SA_LOG(L"Create Swapchain Fence failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"SwapchainFence";
+						swapchainFence->SetName(name);
+
+						SA_LOG(L"Create Swapchain Fence success.", Info, DX12, (L"\"%1\" [%2]", name, swapchainFence.Get()));
+					}
+				}
+
+				// Query back-buffers
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					const HRESULT hrSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
+					if (hrSwapChainGetBuffer)
+					{
+						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const std::wstring name = L"SwapchainBackBuffer [" + std::to_wstring(i) + L"]";
+						swapchainImages[i]->SetName(name.data());
+
+						SA_LOG((L"Get Swapchain Buffer [%1] success.", i), Info, DX12, (L"\"%1\" [%2]", name, swapchainImages[i].Get()));
 					}
 				}
 			}
@@ -390,6 +508,19 @@ int main()
 	{
 		// Renderer
 		{
+			// Swapchain
+			{
+				// Synchronization
+				{
+					CloseHandle(swapchainFenceEvent);
+					swapchainFence = nullptr;
+				}
+
+				swapchainImages.fill(nullptr);
+				swapchain = nullptr;
+			}
+
+
 			// Device
 			{
 				// Synchronization
@@ -423,6 +554,7 @@ int main()
 
 				device = nullptr;
 			}
+
 
 			// Factory
 			{
