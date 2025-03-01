@@ -202,7 +202,7 @@ void WaitDeviceIdle()
 constexpr uint32_t bufferingCount = 3;
 
 MComPtr<IDXGISwapChain3> swapchain; // VkSwapchainKHR -> IDXGISwapChain
-std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages; // VkImage -> ID3D12Resource
+std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages{ nullptr }; // VkImage -> ID3D12Resource
 uint32_t swapchainFrameIndex = 0u;
 
 /**
@@ -214,9 +214,19 @@ uint32_t swapchainFrameIndex = 0u;
 * Only 1 Frame and 1 Windows Event are used FOR ALL FRAME, with different Values (one PER FRAME).
 * See DirectX-Graphics-Samples/D3D12HelloFrameBuffering Sample for reference.
 */
-HANDLE swapchainFenceEvent;
+HANDLE swapchainFenceEvent = nullptr;
 MComPtr<ID3D12Fence> swapchainFence;
-std::array<uint32_t, bufferingCount> swapchainFenceValues;
+std::array<uint32_t, bufferingCount> swapchainFenceValues{ 0u };
+
+
+// === Commands ===
+MComPtr<ID3D12CommandAllocator> cmdAlloc; // VkCommandPool -> ID3D12CommandAllocator
+
+/**
+* /!\ with DirectX12, for graphics operations, the 'CommandList' type is not enough. ID3D12GraphicsCommandList must be used.
+* Like for Vulkan, we allocate 1 command buffer per frame.
+*/
+std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists{ nullptr }; // VkCommandBuffer -> ID3D12CommandList
 
 
 // === Scene Textures ===
@@ -494,6 +504,48 @@ int main()
 					}
 				}
 			}
+
+
+			// Commands
+			{
+				// Allocator
+				{
+					const HRESULT hrCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
+					if (FAILED(hrCmdAllocCreated))
+					{
+						SA_LOG(L"Create Command Allocator failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						LPCWSTR name = L"CommandAlloc";
+						cmdAlloc->SetName(name);
+
+						SA_LOG(L"Create Command Allocator success.", Info, DX12, (L"\"%1\" [%2]", name, cmdAlloc.Get()));
+					}
+				}
+
+				// Lists
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc.Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
+					if (FAILED(hrCmdListCreated))
+					{
+						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const std::wstring name = L"CommandList [" + std::to_wstring(i) + L"]";
+						cmdLists[i]->SetName(name.data());
+
+						SA_LOG((L"Create Command List [%1] success.", i), Info, DX12, (L"\"%1\" [%2]", name, cmdLists[i].Get()));
+					}
+
+					// Command list must be closed because we will start the frame by Reset()
+					cmdLists[i]->Close();
+				}
+			}
 		}
 	}
 
@@ -508,15 +560,38 @@ int main()
 	{
 		// Renderer
 		{
+			// Commands
+			{
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					SA_LOG((L"Destroy Command List [%1] success", i), Info, DX12, cmdLists[i]);
+					cmdLists[i] = nullptr;
+				}
+
+				SA_LOG(L"Destroy Command Allocator success", Info, DX12, cmdAlloc);
+				cmdAlloc = nullptr;
+			}
+
+
 			// Swapchain
 			{
 				// Synchronization
 				{
 					CloseHandle(swapchainFenceEvent);
+					SA_LOG(L"Destroy Swapchain Fence Event success", Info, DX12, swapchainFenceEvent);
+					swapchainFenceEvent = nullptr;
+					
+					SA_LOG(L"Destroy Swapchain Fence success", Info, DX12, swapchainFence);
 					swapchainFence = nullptr;
 				}
 
-				swapchainImages.fill(nullptr);
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					SA_LOG((L"Destroy Swapchain image [%1] success", i), Info, DX12, swapchainImages[i]);
+					swapchainImages[i] = nullptr;
+				}
+
+				SA_LOG(L"Destroy Swapchain success", Info, DX12, swapchain);
 				swapchain = nullptr;
 			}
 
@@ -526,6 +601,10 @@ int main()
 				// Synchronization
 				{
 					CloseHandle(deviceFenceEvent);
+					SA_LOG(L"Destroy Device Fence Event success", Info, DX12, deviceFenceEvent);
+					deviceFenceEvent = nullptr;
+
+					SA_LOG(L"Destroy Device Fence success", Info, DX12, deviceFence);
 					deviceFence = nullptr;
 				}
 
@@ -533,6 +612,7 @@ int main()
 				{
 					// GFX
 					{
+						SA_LOG(L"Destroy Graphics Queue success", Info, DX12, graphicsQueue);
 						graphicsQueue = nullptr;
 					}
 				}
@@ -552,12 +632,14 @@ int main()
 				}
 #endif
 
+				SA_LOG(L"Destroy Device success", Info, DX12, device);
 				device = nullptr;
 			}
 
 
 			// Factory
 			{
+				SA_LOG(L"Destroy Factory success", Info, DX12, factory);
 				factory = nullptr;
 
 #if SA_DEBUG
@@ -581,6 +663,9 @@ int main()
 		// GLFW
 		{
 			glfwDestroyWindow(window);
+			SA_LOG(L"Destroy Window success", Info, GLFW, window);
+			window = nullptr;
+
 			glfwTerminate();
 		}
 	}

@@ -162,7 +162,7 @@ VkQueue presentQueue = VK_NULL_HANDLE;
 constexpr uint32_t bufferingCount = 3;
 
 VkSwapchainKHR swapchain = VK_NULL_HANDLE;
-std::array<VkImage, bufferingCount> swapchainImages;
+std::array<VkImage, bufferingCount> swapchainImages{ VK_NULL_HANDLE };
 
 struct SwapchainSynchronisation
 {
@@ -170,7 +170,12 @@ struct SwapchainSynchronisation
 	VkSemaphore presentSemaphore = VK_NULL_HANDLE;
 	VkFence		fence = VK_NULL_HANDLE;
 };
-std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs;
+std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs{};
+
+
+// === Commands ===
+VkCommandPool cmdPool = VK_NULL_HANDLE;
+std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
 
 int main()
 {
@@ -748,6 +753,57 @@ int main()
 					}
 				}
 			}
+
+
+			// Commands
+			{
+				// Pool
+				{
+					const VkCommandPoolCreateInfo createInfo{
+						.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+						.queueFamilyIndex = deviceQueueFamilyIndices.graphicsFamily,
+					};
+
+					const VkResult vrCmdPoolCreated = vkCreateCommandPool(device, &createInfo, nullptr, &cmdPool);
+					if (vrCmdPoolCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Command Pool failed!", Error, VK, vrCmdPoolCreated);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Command Pool success.", Info, VK, cmdPool);
+					}
+				}
+
+
+				// CmdBuffers
+				{
+					VkCommandBufferAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.commandPool = cmdPool,
+						.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+						.commandBufferCount = bufferingCount,
+					};
+
+					const VkResult vrAllocCmdBuffers = vkAllocateCommandBuffers(device, &allocInfo, cmdBuffers.data());
+					if (vrAllocCmdBuffers != VK_SUCCESS)
+					{
+						SA_LOG(L"Allocate Command buffers failed!", Error, VK, vrAllocCmdBuffers);
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						for (uint32_t i = 0; i < bufferingCount; ++i)
+						{
+							SA_LOG((L"Allocate Command buffer [%1] success.", i), Info, VK, cmdBuffers[i]);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -763,6 +819,32 @@ int main()
 	{
 		// Renderer
 		{
+			// Commands
+			{
+				// CmdBuffers
+				{
+					/**
+					* Can be skipped: will be automatically be freed when destroying VkCommandPool.
+					* Kept for logging purpose.
+					*/
+
+					vkFreeCommandBuffers(device, cmdPool, bufferingCount, cmdBuffers.data());
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						SA_LOG((L"Free Command buffer [%1] success.", i), Info, VK, cmdBuffers[i]);
+						cmdBuffers[i] = VK_NULL_HANDLE;
+					}
+				}
+
+				// Pool
+				{
+					vkDestroyCommandPool(device, cmdPool, nullptr);
+					SA_LOG(L"Destroy Command Pool [%1] success.", Info, VK, cmdPool);
+					cmdPool = VK_NULL_HANDLE;
+				}
+			}
+
+
 			// Swapchain
 			{
 				// Synchronization
