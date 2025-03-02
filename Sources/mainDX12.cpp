@@ -235,12 +235,13 @@ std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists{ nullpt
 constexpr DXGI_FORMAT sceneColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
 constexpr float sceneClearColor[] = { 0.0f, 0.1f, 0.2f, 1.0f };
 // Use Swapchain backbuffer texture as color output.
+MComPtr<ID3D12DescriptorHeap> sceneRTViewHeap;
 
 // = Depth =
 constexpr DXGI_FORMAT sceneDepthFormat = DXGI_FORMAT_D16_UNORM;
 constexpr D3D12_CLEAR_VALUE sceneDepthClearValue{ .Format = sceneDepthFormat, .DepthStencil = { 1.0f, 0 } };
 MComPtr<ID3D12Resource> sceneDepthTexture;
-
+MComPtr<ID3D12DescriptorHeap> sceneDepthRTViewHeap;
 
 
 int main()
@@ -290,7 +291,7 @@ int main()
 					}
 					else
 					{
-						SA_LOG(L"Validation layer initialization failed.", Error, DX12);
+						SA_LOG(L"Validation layer initialization failed.", Error, DX12, (L"Error Code: %1", hrDebugInterface));
 					}
 				}
 
@@ -301,7 +302,7 @@ int main()
 				const HRESULT hrFactoryCreated = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
 				if (FAILED(hrFactoryCreated))
 				{
-					SA_LOG(L"Create Factory failed!", Error, DX12);
+					SA_LOG(L"Create Factory failed!", Error, DX12, (L"Error Code: %1", hrFactoryCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -320,14 +321,14 @@ int main()
 				const HRESULT hrQueryGPU = factory->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter));
 				if (FAILED(hrQueryGPU))
 				{
-					SA_LOG(L"Adapter not found!", Error, DX12);
+					SA_LOG(L"Adapter not found!", Error, DX12, (L"Error Code: %1", hrQueryGPU));
 					return EXIT_FAILURE;
 				}
 
 				const HRESULT hrDeviceCreated = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&device));
 				if (FAILED(hrDeviceCreated))
 				{
-					SA_LOG(L"Create Device failed!", Error, DX12);
+					SA_LOG(L"Create Device failed!", Error, DX12, (L"Error Code: %1", hrDeviceCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -359,7 +360,7 @@ int main()
 					}
 					else
 					{
-						SA_LOG(L"Device query info queue to enable validation layers failed.", Error, DX12);
+						SA_LOG(L"Device query info queue to enable validation layers failed.", Error, DX12, (L"Error Code: %1", hrQueryInfoQueue));
 					}
 				}
 #endif
@@ -382,7 +383,7 @@ int main()
 						const HRESULT hrGFXCmdQueueCreated = device->CreateCommandQueue(&desc, IID_PPV_ARGS(&graphicsQueue));
 						if (FAILED(hrGFXCmdQueueCreated))
 						{
-							SA_LOG(L"Create Graphics Queue failed!", Error, DX12);
+							SA_LOG(L"Create Graphics Queue failed!", Error, DX12, (L"Error Code: %1", hrGFXCmdQueueCreated));
 							return EXIT_FAILURE;
 						}
 						else
@@ -412,7 +413,7 @@ int main()
 					const HRESULT hrDeviceFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&deviceFence));
 					if (FAILED(hrDeviceFenceCreated))
 					{
-						SA_LOG(L"Create Device Fence failed!", Error, DX12);
+						SA_LOG(L"Create Device Fence failed!", Error, DX12, (L"Error Code: %1", hrDeviceFenceCreated));
 						return EXIT_FAILURE;
 					}
 					else
@@ -446,7 +447,7 @@ int main()
 				const HRESULT hrSwapChainCreated = factory->CreateSwapChainForHwnd(graphicsQueue.Get(), glfwGetWin32Window(window), &desc, nullptr, nullptr, &swapchain1);
 				if (FAILED(hrSwapChainCreated))
 				{
-					SA_LOG(L"Create Swapchain failed!", Error, DX12);
+					SA_LOG(L"Create Swapchain failed!", Error, DX12, (L"Error Code: %1", hrSwapChainCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -457,7 +458,7 @@ int main()
 				const HRESULT hrSwapChainCast = swapchain1.As(&swapchain);
 				if (FAILED(hrSwapChainCast))
 				{
-					SA_LOG(L"Swapchain cast failed!", Error, DX12);
+					SA_LOG(L"Swapchain cast failed!", Error, DX12, (L"Error Code: %1", hrSwapChainCast));
 					return EXIT_FAILURE;
 				}
 
@@ -474,7 +475,7 @@ int main()
 					const HRESULT hrSwapChainFenceCreated = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&swapchainFence));
 					if (FAILED(hrSwapChainFenceCreated))
 					{
-						SA_LOG(L"Create Swapchain Fence failed!", Error, DX12);
+						SA_LOG(L"Create Swapchain Fence failed!", Error, DX12, (L"Error Code: %1", hrSwapChainFenceCreated));
 						return EXIT_FAILURE;
 					}
 					else
@@ -492,7 +493,7 @@ int main()
 					const HRESULT hrSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
 					if (hrSwapChainGetBuffer)
 					{
-						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12);
+						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrSwapChainGetBuffer));
 						return EXIT_FAILURE;
 					}
 					else
@@ -513,7 +514,7 @@ int main()
 					const HRESULT hrCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
 					if (FAILED(hrCmdAllocCreated))
 					{
-						SA_LOG(L"Create Command Allocator failed!", Error, DX12);
+						SA_LOG(L"Create Command Allocator failed!", Error, DX12, (L"Error Code: %1", hrCmdAllocCreated));
 						return EXIT_FAILURE;
 					}
 					else
@@ -531,7 +532,7 @@ int main()
 					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc.Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
 					if (FAILED(hrCmdListCreated))
 					{
-						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12);
+						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrCmdListCreated));
 						return EXIT_FAILURE;
 					}
 					else
@@ -544,6 +545,122 @@ int main()
 
 					// Command list must be closed because we will start the frame by Reset()
 					cmdLists[i]->Close();
+				}
+			}
+
+
+			// Scene Resources
+			{
+				// Color RT View Heap
+				{
+					/**
+					* Create a Render Target typed heap to allocate views.
+					*/
+					const D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV,
+						.NumDescriptors = bufferingCount,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+						.NodeMask = 0,
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sceneRTViewHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create Color RenderTarget ViewHeap failed!", Error, DX12, (L"Error Code: %1", hrCreateHeap));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"SceneRTViewHeap";
+						sceneRTViewHeap->SetName(name);
+
+						SA_LOG(L"Create Color RenderTarget ViewHeap success.", Info, DX12, (L"\"%1\" [%2]", name, sceneRTViewHeap.Get()));
+					}
+
+
+					// Create RT Views (for each frame)
+					D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = sceneRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+					const UINT rtvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						device->CreateRenderTargetView(swapchainImages[i].Get(), nullptr, rtvHandle);
+						rtvHandle.ptr += rtvOffset;
+					}
+				}
+
+
+				// Depth Scene Texture
+				{
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+						.Alignment = 0u,
+						.Width = windowSize.x,
+						.Height = windowSize.y,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = sceneDepthFormat,
+						.SampleDesc = DXGI_SAMPLE_DESC{
+							.Count = 1,
+							.Quality = 0,
+						},
+						.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN,
+						.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL,
+					};
+
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+						.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN,
+						.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN,
+						.CreationNodeMask = 1,
+						.VisibleNodeMask = 1,
+					};
+
+					const HRESULT hrCreateDepthTexture = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_DEPTH_WRITE, &sceneDepthClearValue, IID_PPV_ARGS(&sceneDepthTexture));
+					if (FAILED(hrCreateDepthTexture))
+					{
+						SA_LOG(L"Create Scene Depth Texture failed!", Error, DX12, (L"Error Code: %1", hrCreateDepthTexture));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"SceneDepthTexture";
+						sceneDepthTexture->SetName(name);
+
+						SA_LOG(L"Create Scene Depth Texture success.", Info, DX12, (L"\"%1\" [%2]", name, sceneDepthTexture.Get()));
+					}
+				}
+
+				// Depth Scene RT View Heap
+				{
+					/**
+					* Create a 'Depth' typed heap to allocate views.
+					*/
+					const D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV,
+						.NumDescriptors = 1,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE,
+						.NodeMask = 0,
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&sceneDepthRTViewHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create Depth ViewHeap failed!", Error, DX12, (L"Error Code: %1", hrCreateHeap));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"SceneDepthViewHeap";
+						sceneDepthRTViewHeap->SetName(name);
+
+						SA_LOG(L"Create Depth ViewHeap success", Info, DX12, (L"\"%1\" [%2]", name, sceneDepthRTViewHeap.Get()));
+					}
+
+					/**
+					* Create Depth View to use sceneDepthTexture as a render target.
+					*/
+					device->CreateDepthStencilView(sceneDepthTexture.Get(), nullptr, sceneDepthRTViewHeap->GetCPUDescriptorHandleForHeapStart());
 				}
 			}
 		}
@@ -560,15 +677,28 @@ int main()
 	{
 		// Renderer
 		{
+			// Scene Resources
+			{
+				SA_LOG(L"Destroying Scene Color RT ViewHeap...", Info, DX12, sceneRTViewHeap.Get());
+				sceneRTViewHeap = nullptr;
+
+				SA_LOG(L"Destroying Scene Depth RT ViewHeap...", Info, DX12, sceneDepthRTViewHeap.Get());
+				sceneDepthRTViewHeap = nullptr;
+
+				SA_LOG(L"Destroying Scene Depth Texture...", Info, DX12, sceneDepthTexture.Get());
+				sceneDepthTexture = nullptr;
+			}
+
+
 			// Commands
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
-					SA_LOG((L"Destroy Command List [%1] success", i), Info, DX12, cmdLists[i]);
+					SA_LOG((L"Destroying Command List [%1]...", i), Info, DX12, cmdLists[i].Get());
 					cmdLists[i] = nullptr;
 				}
 
-				SA_LOG(L"Destroy Command Allocator success", Info, DX12, cmdAlloc);
+				SA_LOG(L"Destroying Command Allocator...", Info, DX12, cmdAlloc.Get());
 				cmdAlloc = nullptr;
 			}
 
@@ -581,17 +711,17 @@ int main()
 					SA_LOG(L"Destroy Swapchain Fence Event success", Info, DX12, swapchainFenceEvent);
 					swapchainFenceEvent = nullptr;
 					
-					SA_LOG(L"Destroy Swapchain Fence success", Info, DX12, swapchainFence);
+					SA_LOG(L"Destroying Swapchain Fence...", Info, DX12, swapchainFence.Get());
 					swapchainFence = nullptr;
 				}
 
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
-					SA_LOG((L"Destroy Swapchain image [%1] success", i), Info, DX12, swapchainImages[i]);
+					SA_LOG((L"Destroying Swapchain image [%1]...", i), Info, DX12, swapchainImages[i].Get());
 					swapchainImages[i] = nullptr;
 				}
 
-				SA_LOG(L"Destroy Swapchain success", Info, DX12, swapchain);
+				SA_LOG(L"Destroying Swapchain...", Info, DX12, swapchain.Get());
 				swapchain = nullptr;
 			}
 
@@ -604,7 +734,7 @@ int main()
 					SA_LOG(L"Destroy Device Fence Event success", Info, DX12, deviceFenceEvent);
 					deviceFenceEvent = nullptr;
 
-					SA_LOG(L"Destroy Device Fence success", Info, DX12, deviceFence);
+					SA_LOG(L"Destroying Device Fence...", Info, DX12, deviceFence.Get());
 					deviceFence = nullptr;
 				}
 
@@ -612,7 +742,7 @@ int main()
 				{
 					// GFX
 					{
-						SA_LOG(L"Destroy Graphics Queue success", Info, DX12, graphicsQueue);
+						SA_LOG(L"Destroying Graphics Queue...", Info, DX12, graphicsQueue.Get());
 						graphicsQueue = nullptr;
 					}
 				}
@@ -632,14 +762,14 @@ int main()
 				}
 #endif
 
-				SA_LOG(L"Destroy Device success", Info, DX12, device);
+				SA_LOG(L"Destroying Device...", Info, DX12, device.Get());
 				device = nullptr;
 			}
 
 
 			// Factory
 			{
-				SA_LOG(L"Destroy Factory success", Info, DX12, factory);
+				SA_LOG(L"Destroying Factory...", Info, DX12, factory.Get());
 				factory = nullptr;
 
 #if SA_DEBUG
