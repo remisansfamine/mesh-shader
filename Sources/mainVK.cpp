@@ -163,6 +163,7 @@ constexpr uint32_t bufferingCount = 3;
 
 VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 std::array<VkImage, bufferingCount> swapchainImages{ VK_NULL_HANDLE };
+std::array<VkImageView, bufferingCount> swapchainImageViews{ VK_NULL_HANDLE };
 
 struct SwapchainSynchronisation
 {
@@ -176,6 +177,45 @@ std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs{};
 // === Commands ===
 VkCommandPool cmdPool = VK_NULL_HANDLE;
 std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
+
+
+// === Scene Textures ===
+
+// = Color =
+VkFormat sceneColorFormat = VK_FORMAT_R8G8B8_SRGB;
+// Use Swapchain backbuffer texture as color output.
+
+// = Depth =
+const VkFormat sceneDepthFormat = VK_FORMAT_D16_UNORM;
+
+VkImage sceneDepthImage;
+VkDeviceMemory sceneDepthImageMemory;
+VkImageView sceneDepthImageView;
+
+uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
+{
+	VkPhysicalDeviceMemoryProperties memProperties;
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+
+	for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++)
+	{
+		if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties)
+			return i;
+	}
+
+	SA_LOG(L"Failed to find suitable memory type!", Error, VK);
+	return uint32_t(-1);
+}
+
+
+// === RenderPass ===
+VkRenderPass renderPass = VK_NULL_HANDLE;
+
+
+// === Frame Buffer ===
+std::array<VkFramebuffer, bufferingCount> framebuffers;
+
+
 
 int main()
 {
@@ -301,7 +341,7 @@ int main()
 				const VkResult vrInstanceCreated = vkCreateInstance(&instanceCreateInfo, nullptr, &instance);
 				if (vrInstanceCreated != VK_SUCCESS)
 				{
-					SA_LOG(L"Create VkInstance failed!", Error, VK, vrInstanceCreated);
+					SA_LOG(L"Create VkInstance failed!", Error, VK, (L"Error Code: %1", vrInstanceCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -320,7 +360,7 @@ int main()
 				const VkResult vrWindowSurfaceCreated = glfwCreateWindowSurface(instance, window, nullptr, &windowSurface);
 				if (vrWindowSurfaceCreated != VK_SUCCESS)
 				{
-					SA_LOG(L"Create Window Surafce failed!", Error, VK, vrWindowSurfaceCreated);
+					SA_LOG(L"Create Window Surafce failed!", Error, VK, (L"Error Code: %1", vrWindowSurfaceCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -337,7 +377,7 @@ int main()
 				const VkResult vrEnumPhysDeviceCount = vkEnumeratePhysicalDevices(instance, &deviceCount, nullptr);
 				if (vrEnumPhysDeviceCount != VK_SUCCESS)
 				{
-					SA_LOG(L"Enumerate Physical Devices Count failed!", Error, VK, vrEnumPhysDeviceCount);
+					SA_LOG(L"Enumerate Physical Devices Count failed!", Error, VK, (L"Error Code: %1", vrEnumPhysDeviceCount));
 					return EXIT_FAILURE;
 				}
 				if (deviceCount == 0)
@@ -350,7 +390,7 @@ int main()
 				const VkResult vrEnumPhysDevices = vkEnumeratePhysicalDevices(instance, &deviceCount, physicalDevices.data());
 				if (vrEnumPhysDevices != VK_SUCCESS)
 				{
-					SA_LOG(L"Enumerate Physical Devices failed!", Error, VK, vrEnumPhysDevices);
+					SA_LOG(L"Enumerate Physical Devices failed!", Error, VK, (L"Error Code: %1", vrEnumPhysDevices));
 					return EXIT_FAILURE;
 				}
 
@@ -365,7 +405,7 @@ int main()
 						const VkResult vrEnumDeviceExtsCount = vkEnumerateDeviceExtensionProperties(currPhysicalDevice, nullptr, &extensionCount, nullptr);
 						if (vrEnumDeviceExtsCount != VK_SUCCESS)
 						{
-							SA_LOG(L"Enumerate Devices extensions count failed!", Error, VK, vrEnumDeviceExtsCount);
+							SA_LOG(L"Enumerate Devices extensions count failed!", Error, VK, (L"Error Code: %1", vrEnumDeviceExtsCount));
 							return EXIT_FAILURE;
 						}
 
@@ -373,7 +413,7 @@ int main()
 						const VkResult vrEnumDeviceExts = vkEnumerateDeviceExtensionProperties(currPhysicalDevice, nullptr, &extensionCount, supportedExts.data());
 						if (vrEnumDeviceExts != VK_SUCCESS)
 						{
-							SA_LOG(L"Enumerate Devices extensions failed!", Error, VK, vrEnumDeviceExts);
+							SA_LOG(L"Enumerate Devices extensions failed!", Error, VK, (L"Error Code: %1", vrEnumDeviceExts));
 							return EXIT_FAILURE;
 						}
 
@@ -435,7 +475,7 @@ int main()
 								const VkResult vrSupportKHR = vkGetPhysicalDeviceSurfaceSupportKHR(currPhysicalDevice, i, windowSurface, &presentSupport);
 								if (vrSupportKHR != VK_SUCCESS)
 								{
-									SA_LOG(L"Physical Device Surface Support failed.", Error, VK, vrSupportKHR);
+									SA_LOG(L"Physical Device Surface Support failed.", Error, VK, (L"Error Code: %1", vrSupportKHR));
 									return EXIT_SUCCESS;
 								}
 
@@ -522,7 +562,7 @@ int main()
 				const VkResult vrDeviceCreated = vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device);
 				if (vrDeviceCreated != VK_SUCCESS)
 				{
-					SA_LOG(L"Create Logical Device failed.", Error, VK, vrDeviceCreated);
+					SA_LOG(L"Create Logical Device failed.", Error, VK, (L"Error Code: %1", vrDeviceCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -564,7 +604,7 @@ int main()
 					const VkResult vrGetSurfaceFormatsCount = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface, &formatCount, nullptr);
 					if (vrGetSurfaceFormatsCount != VK_SUCCESS)
 					{
-						SA_LOG(L"Get Physical Device Surface Formats Count failed!", Error, VK);
+						SA_LOG(L"Get Physical Device Surface Formats Count failed!", Error, VK, (L"Error Code: %1", vrGetSurfaceFormatsCount));
 						return EXIT_FAILURE;
 					}
 					if (formatCount == 0)
@@ -577,7 +617,7 @@ int main()
 					const VkResult vrGetSurfaceFormats = vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, windowSurface, &formatCount, formats.data());
 					if (vrGetSurfaceFormats != VK_SUCCESS)
 					{
-						SA_LOG(L"Get Physical Device Surface Formats failed!", Error, VK);
+						SA_LOG(L"Get Physical Device Surface Formats failed!", Error, VK, (L"Error Code: %1", vrGetSurfaceFormats));
 						return EXIT_FAILURE;
 					}
 
@@ -587,7 +627,7 @@ int main()
 					const VkResult vrGetSurfacePresentCount = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface, &presentModeCount, nullptr);
 					if (vrGetSurfacePresentCount != VK_SUCCESS)
 					{
-						SA_LOG(L"Get Physical Device Surface PresentModes Count failed!", Error, VK);
+						SA_LOG(L"Get Physical Device Surface PresentModes Count failed!", Error, VK, (L"Error Code: %1", vrGetSurfacePresentCount));
 						return EXIT_FAILURE;
 					}
 					if (presentModeCount == 0)
@@ -600,7 +640,7 @@ int main()
 					const VkResult vrGetSurfacePresent = vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, windowSurface, &presentModeCount, presentModes.data());
 					if (vrGetSurfacePresent != VK_SUCCESS)
 					{
-						SA_LOG(L"Get Physical Device Surface present modes failed!", Error, VK);
+						SA_LOG(L"Get Physical Device Surface present modes failed!", Error, VK, (L"Error Code: %1", vrGetSurfacePresent));
 						return EXIT_FAILURE;
 					}
 				}
@@ -617,6 +657,8 @@ int main()
 							break;
 						}
 					}
+
+					sceneColorFormat = swapchainFormat.format;
 				}
 
 				// ChooseSwapPresentMode
@@ -672,7 +714,7 @@ int main()
 				const VkResult vrSwapchainCreated = vkCreateSwapchainKHR(device, &swapchainCreateInfo, nullptr, &swapchain);
 				if (vrSwapchainCreated != VK_SUCCESS)
 				{
-					SA_LOG("Create Swapchain failed!", Error, VK);
+					SA_LOG("Create Swapchain failed!", Error, VK, (L"Error Code: %1", vrSwapchainCreated));
 					return EXIT_FAILURE;
 				}
 				else
@@ -686,7 +728,7 @@ int main()
 				const VkResult vrGetSwapchainImages = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageNum, swapchainImages.data());
 				if (vrGetSwapchainImages != VK_SUCCESS || swapchainImageNum != bufferingCount)
 				{
-					SA_LOG(L"Get Swapchain Images failed!", Error, VK, vrGetSwapchainImages);
+					SA_LOG(L"Get Swapchain Images failed!", Error, VK, (L"Error Code: %1", vrGetSwapchainImages));
 					return EXIT_FAILURE;
 				}
 				else
@@ -694,6 +736,46 @@ int main()
 					for (uint32_t i = 0; i < bufferingCount; ++i)
 					{
 						SA_LOG(L"Created Swapchain backbuffer images success.", Info, VK, swapchainImages[i]);
+					}
+				}
+
+
+				// Image Views
+				{
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						const VkImageViewCreateInfo imgViewCreateInfo{
+							.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0,
+							.image = swapchainImages[i],
+							.viewType = VK_IMAGE_VIEW_TYPE_2D,
+							.format = sceneColorFormat,
+							.components{
+								.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.a = VK_COMPONENT_SWIZZLE_IDENTITY
+							},
+							.subresourceRange{
+								.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+								.baseMipLevel = 0,
+								.levelCount = 1,
+								.baseArrayLayer = 0,
+								.layerCount = 1,
+							}
+						};
+
+						const VkResult vrImageViewCreated = vkCreateImageView(device, &imgViewCreateInfo, nullptr, &swapchainImageViews[i]);
+						if (vrImageViewCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Swapchain ImageView failed!", Error, VK, (L"Error Code: %1", vrImageViewCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Swapchain ImageView success.", Info, VK, swapchainImageViews[i]);
+						}
 					}
 				}
 
@@ -716,13 +798,12 @@ int main()
 						const VkResult vrAcqSemaphoreCreated = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &swapchainSyncs[i].acquireSemaphore);
 						if (vrAcqSemaphoreCreated != VK_SUCCESS)
 						{
-							SA_LOG((L"Create Swapchain Acquire Semaphore [%1] failed!", i), Error, VK, vrAcqSemaphoreCreated);
+							SA_LOG((L"Create Swapchain Acquire Semaphore [%1] failed!", i), Error, VK, (L"Error Code: %1", vrAcqSemaphoreCreated));
 							return EXIT_FAILURE;
 						}
 						else
 						{
 							SA_LOG((L"Create Swapchain Acquire Semaphore [%1] success", i), Info, VK, swapchainSyncs[i].acquireSemaphore);
-							;
 						}
 
 
@@ -730,7 +811,7 @@ int main()
 						const VkResult vrPresSemaphoreCreated = vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &swapchainSyncs[i].presentSemaphore);
 						if (vrPresSemaphoreCreated != VK_SUCCESS)
 						{
-							SA_LOG((L"Create Swapchain Present Semaphore [%1] failed!", i), Error, VK, vrPresSemaphoreCreated);
+							SA_LOG((L"Create Swapchain Present Semaphore [%1] failed!", i), Error, VK, (L"Error Code: %1", vrPresSemaphoreCreated));
 							return EXIT_FAILURE;
 						}
 						else
@@ -743,7 +824,7 @@ int main()
 						const VkResult vrFenceCreated = vkCreateFence(device, &fenceCreateInfo, nullptr, &swapchainSyncs[i].fence);
 						if (vrFenceCreated != VK_SUCCESS)
 						{
-							SA_LOG((L"Create Swapchain Fence [%1] failed!", i), Error, VK, vrFenceCreated);
+							SA_LOG((L"Create Swapchain Fence [%1] failed!", i), Error, VK, (L"Error Code: %1", vrFenceCreated));
 							return EXIT_FAILURE;
 						}
 						else
@@ -769,7 +850,7 @@ int main()
 					const VkResult vrCmdPoolCreated = vkCreateCommandPool(device, &createInfo, nullptr, &cmdPool);
 					if (vrCmdPoolCreated != VK_SUCCESS)
 					{
-						SA_LOG(L"Create Command Pool failed!", Error, VK, vrCmdPoolCreated);
+						SA_LOG(L"Create Command Pool failed!", Error, VK, (L"Error Code: %1", vrCmdPoolCreated));
 						return EXIT_FAILURE;
 					}
 					else
@@ -792,15 +873,237 @@ int main()
 					const VkResult vrAllocCmdBuffers = vkAllocateCommandBuffers(device, &allocInfo, cmdBuffers.data());
 					if (vrAllocCmdBuffers != VK_SUCCESS)
 					{
-						SA_LOG(L"Allocate Command buffers failed!", Error, VK, vrAllocCmdBuffers);
+						SA_LOG(L"Allocate Command buffers failed!", Error, VK, (L"Error Code: %1", vrAllocCmdBuffers));
 						return EXIT_FAILURE;
 					}
 					else
 					{
 						for (uint32_t i = 0; i < bufferingCount; ++i)
 						{
-							SA_LOG((L"Allocate Command buffer [%1] success.", i), Info, VK, cmdBuffers[i]);
+							SA_LOG((L"Allocate Command buffer [%1] success.", i), Info, VK, (L"Error Code: %1", cmdBuffers[i]));
 						}
+					}
+				}
+			}
+
+
+			// Scene Resources
+			{
+				// Depth Texture
+				{
+					// Image
+					{
+						const VkImageCreateInfo imageCreateInfo{
+							.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0,
+							.imageType = VK_IMAGE_TYPE_2D,
+							.format = sceneDepthFormat,
+							.extent = VkExtent3D{ windowSize.x, windowSize.y, 1u },
+							.mipLevels = 1,
+							.arrayLayers = 1,
+							.samples = VK_SAMPLE_COUNT_1_BIT,
+							.tiling = VK_IMAGE_TILING_OPTIMAL,
+							.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+							.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+							.queueFamilyIndexCount = 0,
+							.pQueueFamilyIndices = nullptr,
+							.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+						};
+
+						const VkResult vrImageCreated = vkCreateImage(device, &imageCreateInfo, nullptr, &sceneDepthImage);
+						if (vrImageCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Scene Depth Image failed!", Error, Vk, (L"Error Code: %1", vrImageCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Scene Depth Image success.", Info, VK, sceneDepthImage);
+						}
+					}
+
+
+					// Image Memory
+					{
+						VkMemoryRequirements memRequirements;
+						vkGetImageMemoryRequirements(device, sceneDepthImage, &memRequirements);
+
+						const VkMemoryAllocateInfo allocInfo{
+							.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+							.pNext = nullptr,
+							.allocationSize = memRequirements.size,
+							.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+						};
+
+						const VkResult vrImgAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sceneDepthImageMemory);
+						if (vrImgAlloc != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Scene Depth Image Memory failed!", Error, Vk, (L"Error Code: %1", vrImgAlloc));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Scene Depth Image Memory success.", Info, VK, sceneDepthImageMemory);
+						}
+
+
+						const VkResult vrImgMemBind = vkBindImageMemory(device, sceneDepthImage, sceneDepthImageMemory, 0);
+						if (vrImgMemBind != VK_SUCCESS)
+						{
+							SA_LOG(L"Bind Scene Depth Image Memory failed!", Error, Vk, (L"Error Code: %1", vrImgMemBind));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Bind Scene Depth Image Memory success.", Info, VK);
+						}
+					}
+
+
+					// Image View
+					{
+						const VkImageViewCreateInfo viewInfo{
+							.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0,
+							.image = sceneDepthImage,
+							.viewType = VK_IMAGE_VIEW_TYPE_2D,
+							.format = sceneDepthFormat,
+							.components{
+								.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+								.a = VK_COMPONENT_SWIZZLE_IDENTITY
+							},
+							.subresourceRange{
+								.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+								.baseMipLevel = 0,
+								.levelCount = 1,
+								.baseArrayLayer = 0,
+								.layerCount = 1,
+							}
+						};
+
+						const VkResult vrImgViewCreated = vkCreateImageView(device, &viewInfo, nullptr, &sceneDepthImageView);
+						if (vrImgViewCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Scene Depth Image View failed!", Error, Vk, (L"Error Code: %1", vrImgViewCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Scene Depth Image View success.", Info, VK, sceneDepthImageView);
+						}
+					}
+				}
+			}
+
+			// Render Pass
+			{
+				const std::array<VkAttachmentDescription, 2> attachments{
+					VkAttachmentDescription{
+						.flags = 0,
+						.format = sceneColorFormat,
+						.samples = VK_SAMPLE_COUNT_1_BIT,
+						.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+						.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+						.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+						.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+						.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+						.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+					},
+					VkAttachmentDescription{
+						.flags = 0,
+						.format = sceneColorFormat,
+						.samples = VK_SAMPLE_COUNT_1_BIT,
+						.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+						.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+						.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+						.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+						.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+						.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+					},
+				};
+
+				const VkAttachmentReference colorAttachmentRef{
+					.attachment = 0,
+					.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				};
+
+				const VkAttachmentReference depthAttachmentRef{
+					.attachment = 1,
+					.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+				};
+
+				const VkSubpassDescription subpass{
+					.flags = 0,
+					.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+					.inputAttachmentCount = 0,
+					.pInputAttachments = nullptr,
+					.colorAttachmentCount = 1,
+					.pColorAttachments = &colorAttachmentRef,
+					.pResolveAttachments = nullptr,
+					.pDepthStencilAttachment = &depthAttachmentRef,
+					.preserveAttachmentCount = 0,
+					.pPreserveAttachments = nullptr,
+				};
+
+				const VkRenderPassCreateInfo renderPassInfo{
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+					.pNext = nullptr,
+					.flags = 0,
+					.attachmentCount = static_cast<uint32_t>(attachments.size()),
+					.pAttachments = attachments.data(),
+					.subpassCount = 1,
+					.pSubpasses = &subpass,
+					.dependencyCount = 0,
+					.pDependencies = nullptr,
+				};
+
+				const VkResult vrRenderPassCreated = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
+				if (vrRenderPassCreated != VK_SUCCESS)
+				{
+					SA_LOG(L"Create RenderPass failed!", Error, VK, (L"Error Code: %1", vrRenderPassCreated));
+					return EXIT_FAILURE;
+				}
+				else
+				{
+					SA_LOG(L"Create RenderPass success", Info, VK, renderPass);
+				}
+			}
+
+
+			// Framebuffers
+			{
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					std::array<VkImageView, 2u> attachments{
+						swapchainImageViews[i],
+						sceneDepthImageView
+					};
+
+					const VkFramebufferCreateInfo framebufferInfo{
+						.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0,
+						.renderPass = renderPass,
+						.attachmentCount = static_cast<uint32_t>(attachments.size()),
+						.pAttachments = attachments.data(),
+						.width = windowSize.x,
+						.height = windowSize.y,
+						.layers = 1,
+					};
+
+					const VkResult vrFrameBuffCreated = vkCreateFramebuffer(device, &framebufferInfo, nullptr, &framebuffers[i]);
+					if (vrFrameBuffCreated != VK_SUCCESS)
+					{
+						SA_LOG((L"Create FrameBuffer [%1] failed!", i), Error, VK, (L"Error Code: %1", vrFrameBuffCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG((L"Create FrameBuffer [%1] success", i), Info, VK, framebuffers[i]);
 					}
 				}
 			}
@@ -819,6 +1122,53 @@ int main()
 	{
 		// Renderer
 		{
+			// Framebuffers
+			{
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					vkDestroyFramebuffer(device, framebuffers[i], nullptr);
+					SA_LOG((L"Destroy FrameBuffer [%1] success.", i), Info, VK, framebuffers[i]);
+					framebuffers[i] = VK_NULL_HANDLE;
+				}
+			}
+
+
+			// RenderPass
+			{
+				vkDestroyRenderPass(device, renderPass, nullptr);
+				SA_LOG(L"Destroy RenderPass success.", Info, VK, renderPass);
+				renderPass = VK_NULL_HANDLE;
+			}
+
+
+			// Scene Resources
+			{
+				// Depth Texture
+				{
+					// Image View
+					{
+						vkDestroyImageView(device, sceneDepthImageView, nullptr);
+						SA_LOG(L"Destroy Scene Depth ImageView success", Info, VK, sceneDepthImageView);
+						sceneDepthImageView = VK_NULL_HANDLE;
+					}
+
+					// Image Memory
+					{
+						vkFreeMemory(device, sceneDepthImageMemory, nullptr);
+						SA_LOG(L"Free Scene Depth Image Memory success", Info, VK, sceneDepthImageMemory);
+						sceneDepthImageMemory = VK_NULL_HANDLE;
+					}
+
+					// Image
+					{
+						vkDestroyImage(device, sceneDepthImage, nullptr);
+						SA_LOG(L"Destroy Scene Depth Image success", Info, VK, sceneDepthImage);
+						sceneDepthImage = VK_NULL_HANDLE;
+					}
+				}
+			}
+
+
 			// Commands
 			{
 				// CmdBuffers
@@ -865,6 +1215,18 @@ int main()
 					}
 				}
 
+
+				// ImageViews
+				{
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						vkDestroyImageView(device, swapchainImageViews[i], nullptr);
+						SA_LOG(L"Destroy Swapchain ImageView success", Info, VK, swapchainImageViews[i]);
+						swapchainImageViews[i] = VK_NULL_HANDLE;
+					}
+				}
+
+
 				// Backbuffers
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
@@ -878,6 +1240,7 @@ int main()
 				SA_LOG(L"Destroy Swapchain success", Info, VK, swapchain);
 				swapchain = VK_NULL_HANDLE;
 			}
+
 
 			// Device
 			{
