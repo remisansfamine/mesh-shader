@@ -726,7 +726,7 @@ int main()
 					{
 						/**
 						* Root signature is the Pipeline Layout.
-						* Describe the shader bindings.
+						* Since there is no 'DescriptorSetLayout' in DX12, we have to manually specify all the shader bindings here.
 						*/
 
 						const D3D12_DESCRIPTOR_RANGE1 pointLightSRVRange{

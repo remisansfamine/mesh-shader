@@ -1,4 +1,6 @@
 #include <array>
+#include <fstream>
+#include <sstream>
 
 /**
 * Sapphire Suite Debugger:
@@ -25,6 +27,60 @@
 #pragma warning(disable : 4505)
 #include <stb_image_resize2.h>
 #pragma warning(default : 4505)
+
+#include <shaderc/shaderc.hpp>
+
+bool CompileShaderFromFile(const std::string& _path, shaderc_shader_kind _stage, std::vector<uint32_t>& _out)
+{
+	// Read File
+	std::string code;
+	{
+		std::fstream fStream(_path, std::ios_base::in);
+
+		if (!fStream.is_open())
+		{
+			SA_LOG((L"Failed to open shader file {%1}", _path), Error, VK.Shader);
+			return false;
+		}
+
+
+		std::stringstream sstream;
+		sstream << fStream.rdbuf();
+
+		fStream.close();
+
+		code = sstream.str();
+	}
+
+	// Compile
+	static shaderc::Compiler compiler;
+
+	shaderc::CompileOptions options;
+
+#if !SA_DEBUG
+	options.SetOptimizationLevel(shaderc_optimization_level_performance);
+#endif
+
+	const shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(code, _stage, _path.c_str(), options);
+
+	if (result.GetCompilationStatus() != shaderc_compilation_status_success)
+	{
+		SA_LOG((L"Compile Shader {%1} failed!", _path), Error, VK.Shader, (L"Errors: %1\tWarnings: %2\n%3", result.GetNumErrors(), result.GetNumWarnings(), result.GetErrorMessage()));
+		return false;
+	}
+	else if (result.GetNumWarnings())
+	{
+		SA_LOG((L"Compile Shader {%1} success with %2 warnings.", _path, result.GetNumWarnings()), Warning, VK.Shadar, result.GetErrorMessage());
+	}
+	else
+	{
+		SA_LOG((L"Compile Shader {%1} success.", _path), Info, VK.Shader);
+	}
+
+	_out = { result.cbegin(), result.cend() };
+
+	return true;
+}
 
 
 // ========== Windowing ==========
@@ -188,9 +244,9 @@ VkFormat sceneColorFormat = VK_FORMAT_R8G8B8_SRGB;
 // = Depth =
 const VkFormat sceneDepthFormat = VK_FORMAT_D16_UNORM;
 
-VkImage sceneDepthImage;
-VkDeviceMemory sceneDepthImageMemory;
-VkImageView sceneDepthImageView;
+VkImage sceneDepthImage = VK_NULL_HANDLE;
+VkDeviceMemory sceneDepthImageMemory = VK_NULL_HANDLE;
+VkImageView sceneDepthImageView = VK_NULL_HANDLE;
 
 uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
 {
@@ -213,7 +269,22 @@ VkRenderPass renderPass = VK_NULL_HANDLE;
 
 
 // === Frame Buffer ===
-std::array<VkFramebuffer, bufferingCount> framebuffers;
+std::array<VkFramebuffer, bufferingCount> framebuffers{ VK_NULL_HANDLE };
+
+
+// === Pipeline ===
+
+// = Viewport & Scissor =
+VkViewport viewport{};
+VkRect2D scissorRect{};
+
+// = Lit =
+
+VkShaderModule litVertexShader = VK_NULL_HANDLE;
+VkShaderModule litFragmentShader = VK_NULL_HANDLE;
+
+VkPipelineLayout litPipelineLayout = VK_NULL_HANDLE;
+VkPipeline litPipeline = VK_NULL_HANDLE;
 
 
 
@@ -977,7 +1048,7 @@ int main()
 								.a = VK_COMPONENT_SWIZZLE_IDENTITY
 							},
 							.subresourceRange{
-								.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+								.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
 								.baseMipLevel = 0,
 								.levelCount = 1,
 								.baseArrayLayer = 0,
@@ -1015,7 +1086,7 @@ int main()
 					},
 					VkAttachmentDescription{
 						.flags = 0,
-						.format = sceneColorFormat,
+						.format = sceneDepthFormat,
 						.samples = VK_SAMPLE_COUNT_1_BIT,
 						.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 						.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -1049,6 +1120,16 @@ int main()
 					.pPreserveAttachments = nullptr,
 				};
 
+				const VkSubpassDependency dependency{
+					.srcSubpass = VK_SUBPASS_EXTERNAL,
+					.dstSubpass = 0,
+					.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+					.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+					.srcAccessMask = 0,
+					.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+					.dependencyFlags = 0u,
+				};
+
 				const VkRenderPassCreateInfo renderPassInfo{
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 					.pNext = nullptr,
@@ -1057,8 +1138,8 @@ int main()
 					.pAttachments = attachments.data(),
 					.subpassCount = 1,
 					.pSubpasses = &subpass,
-					.dependencyCount = 0,
-					.pDependencies = nullptr,
+					.dependencyCount = 1,
+					.pDependencies = &dependency,
 				};
 
 				const VkResult vrRenderPassCreated = vkCreateRenderPass(device, &renderPassInfo, nullptr, &renderPass);
@@ -1107,6 +1188,328 @@ int main()
 					}
 				}
 			}
+
+
+			// Pipeline
+			{
+				// Viewport & Scissor
+				{
+					viewport = VkViewport{
+						.x = 0,
+						.y = 0,
+						.width = static_cast<float>(windowSize.x),
+						.height = static_cast<float>(windowSize.y),
+						.minDepth = 0.0f,
+						.maxDepth = 1.0f,
+					};
+
+					scissorRect = VkRect2D{
+						.offset = VkOffset2D{ 0, 0 },
+						.extent = VkExtent2D{ windowSize.x, windowSize.y },
+					};
+				}
+
+
+				// Lit
+				{
+					// Pipeline Layout
+					{
+						const VkPipelineLayoutCreateInfo pipelineLayoutInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0,
+							.setLayoutCount = 0u,
+							.pSetLayouts = nullptr,
+							.pushConstantRangeCount = 0u,
+							.pPushConstantRanges = nullptr,
+						};
+
+						const VkResult vrPipLayoutCreated = vkCreatePipelineLayout(device, &pipelineLayoutInfo, nullptr, &litPipelineLayout);
+						if (vrPipLayoutCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Lit Pipeline Layout failed!", Error, VK, (L"Error Code: %1", vrPipLayoutCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit Pipeline Layout success", Info, VK, litPipelineLayout);
+						}
+					}
+
+
+					// Vertex Shader
+					{
+						std::vector<uint32_t> shCode;
+
+						CompileShaderFromFile("Resources/Shaders/GLSL/LitShader.vert", shaderc_vertex_shader, shCode);
+
+						const VkShaderModuleCreateInfo createInfo{
+							.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.codeSize = static_cast<uint32_t>(shCode.size()),
+							.pCode = shCode.data(),
+						};
+
+						const VkResult vrShaderCompile = vkCreateShaderModule(device, &createInfo, nullptr, &litVertexShader);
+						if (vrShaderCompile != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Lit Vertex Shader failed!", Info, VK, (L"Error code: %1", vrShaderCompile));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit Vertex Shader success", Info, VK, litVertexShader);
+						}
+					}
+
+					// Fragment Shader
+					{
+						std::vector<uint32_t> shCode;
+
+						CompileShaderFromFile("Resources/Shaders/GLSL/LitShader.frag", shaderc_fragment_shader, shCode);
+
+						const VkShaderModuleCreateInfo createInfo{
+							.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.codeSize = static_cast<uint32_t>(shCode.size()),
+							.pCode = shCode.data(),
+						};
+
+						const VkResult vrShaderCompile = vkCreateShaderModule(device, &createInfo, nullptr, &litFragmentShader);
+						if (vrShaderCompile != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Lit Fragment Shader failed!", Info, VK, (L"Error code: %1", vrShaderCompile));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit Fragment Shader success", Info, VK, litFragmentShader);
+						}
+					}
+
+
+					// Pipeline
+					{
+						const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages{
+							VkPipelineShaderStageCreateInfo{
+								.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.stage = VK_SHADER_STAGE_VERTEX_BIT,
+								.module = litVertexShader,
+								.pName = "main",
+								.pSpecializationInfo = nullptr,
+							},
+							VkPipelineShaderStageCreateInfo{
+								.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.module = litFragmentShader,
+								.pName = "main",
+								.pSpecializationInfo = nullptr,
+							},
+						};
+
+						const std::array<VkVertexInputBindingDescription, 4> vertexInputBindings{
+							VkVertexInputBindingDescription{ // Position
+								.binding = 0,
+								.stride = sizeof(SA::Vec3f),
+								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+							},
+							VkVertexInputBindingDescription{ // Normal
+								.binding = 1,
+								.stride = sizeof(SA::Vec3f),
+								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+							},
+							VkVertexInputBindingDescription{ // Tangent
+								.binding = 2,
+								.stride = sizeof(SA::Vec3f),
+								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+							},
+							VkVertexInputBindingDescription{ // UV
+								.binding = 3,
+								.stride = sizeof(SA::Vec2f),
+								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+							},
+						};
+
+						const std::array<VkVertexInputAttributeDescription, 4> vertexInputAttribs{
+							VkVertexInputAttributeDescription{ // Position
+								.location = 0u,
+								.binding = 0u,
+								.format = VK_FORMAT_R32G32B32_SFLOAT,
+								.offset = 0u,
+							},
+							VkVertexInputAttributeDescription{ // Normal
+								.location = 1u,
+								.binding = 0u,
+								.format = VK_FORMAT_R32G32B32_SFLOAT,
+								.offset = 0u,
+							},
+							VkVertexInputAttributeDescription{ // Tangent
+								.location = 2u,
+								.binding = 0u,
+								.format = VK_FORMAT_R32G32B32_SFLOAT,
+								.offset = 0u,
+							},
+							VkVertexInputAttributeDescription{ // UV
+								.location = 3u,
+								.binding = 0u,
+								.format = VK_FORMAT_R32G32_SFLOAT,
+								.offset = 0u,
+							},
+						};
+
+						const VkPipelineInputAssemblyStateCreateInfo inputAssemblyState{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+							.primitiveRestartEnable = VK_FALSE,
+						};
+
+						const VkPipelineVertexInputStateCreateInfo vertexInputInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size()),
+							.pVertexBindingDescriptions = vertexInputBindings.data(),
+							.vertexAttributeDescriptionCount = static_cast<uint32_t>(vertexInputAttribs.size()),
+							.pVertexAttributeDescriptions = vertexInputAttribs.data(),
+						};
+
+						const VkPipelineViewportStateCreateInfo viewportInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.viewportCount = 1,
+							.pViewports = &viewport,
+							.scissorCount = 1,
+							.pScissors = &scissorRect,
+						};
+
+						const VkPipelineRasterizationStateCreateInfo rasterInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.depthClampEnable = VK_FALSE,
+							.rasterizerDiscardEnable = VK_FALSE,
+							.polygonMode = VK_POLYGON_MODE_FILL,
+							.cullMode = VK_CULL_MODE_BACK_BIT,
+							.frontFace = VK_FRONT_FACE_CLOCKWISE,
+							.depthBiasEnable = VK_FALSE,
+							.depthBiasConstantFactor = 0.0f,
+							.depthBiasClamp = 0.0f,
+							.depthBiasSlopeFactor = 0.0f,
+							.lineWidth = 1.0f,
+						};
+
+						const VkPipelineMultisampleStateCreateInfo multisampleInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+							.sampleShadingEnable = VK_FALSE,
+							.minSampleShading = 1.0f,
+							.pSampleMask = nullptr,
+							.alphaToCoverageEnable = VK_FALSE,
+							.alphaToOneEnable = VK_FALSE,
+						};
+
+						const VkPipelineDepthStencilStateCreateInfo depthStencilState{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.depthTestEnable = VK_TRUE,
+							.depthWriteEnable = VK_TRUE,
+							.depthCompareOp = VK_COMPARE_OP_LESS,
+							.depthBoundsTestEnable = VK_FALSE,
+							.stencilTestEnable = VK_FALSE,
+							.front = {},
+							.back = {},
+							.minDepthBounds = 0.0f,
+							.maxDepthBounds = 1.0f,
+						};
+
+						const std::array<VkPipelineColorBlendAttachmentState, 1> colorBlandAttachs{
+							VkPipelineColorBlendAttachmentState{
+								.blendEnable = VK_FALSE,
+								.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
+								.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO,
+								.colorBlendOp = VK_BLEND_OP_ADD,
+								.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE,
+								.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO,
+								.alphaBlendOp = VK_BLEND_OP_ADD,
+								.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+													VK_COLOR_COMPONENT_G_BIT |
+													VK_COLOR_COMPONENT_B_BIT |
+													VK_COLOR_COMPONENT_A_BIT,
+							},
+						};
+
+						const VkPipelineColorBlendStateCreateInfo colorBlendState{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.logicOpEnable = VK_FALSE,
+							.logicOp = VK_LOGIC_OP_COPY,
+							.attachmentCount = static_cast<uint32_t>(colorBlandAttachs.size()),
+							.pAttachments = colorBlandAttachs.data(),
+							.blendConstants = { 0.0f },
+						};
+
+						const std::array<VkDynamicState, 2> dynamicStates{
+							VK_DYNAMIC_STATE_VIEWPORT,
+							VK_DYNAMIC_STATE_SCISSOR
+						};
+
+						const VkPipelineDynamicStateCreateInfo dynamicStateInfo{
+							.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size()),
+							.pDynamicStates = dynamicStates.data(),
+						};
+
+
+						const VkGraphicsPipelineCreateInfo pipelineInfo{
+							.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.stageCount = static_cast<uint32_t>(shaderStages.size()),
+							.pStages = shaderStages.data(),
+							.pVertexInputState = &vertexInputInfo,
+							.pInputAssemblyState = &inputAssemblyState,
+							.pTessellationState = nullptr,
+							.pViewportState = &viewportInfo,
+							.pRasterizationState = &rasterInfo,
+							.pMultisampleState = &multisampleInfo,
+							.pDepthStencilState = &depthStencilState,
+							.pColorBlendState = &colorBlendState,
+							.pDynamicState = &dynamicStateInfo,
+							.layout = litPipelineLayout,
+							.renderPass = renderPass,
+							.subpass = 0u,
+							.basePipelineHandle = VK_NULL_HANDLE,
+							.basePipelineIndex = -1,
+						};
+
+						const VkResult vrCreatePipeline = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1u, &pipelineInfo, nullptr, &litPipeline);
+						if (vrCreatePipeline != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Lit Pipeline failed!", Error, VK, (L"Error Code: %1", vrCreatePipeline));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit Pipeline success", Info, VK, litPipeline);
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -1122,6 +1525,41 @@ int main()
 	{
 		// Renderer
 		{
+			// Pipeline
+			{
+				// Lit
+				{
+					// Pipeline
+					{
+						vkDestroyPipeline(device, litPipeline, nullptr);
+						SA_LOG(L"Destroy Lit Pipeline success.", Info, VK, litPipeline);
+						litPipeline = VK_NULL_HANDLE;
+					}
+
+					// Fragment Shader
+					{
+						vkDestroyShaderModule(device, litFragmentShader, nullptr);
+						SA_LOG(L"Destroy Lit Fragment Shader success.", Info, VK, litFragmentShader);
+						litFragmentShader = VK_NULL_HANDLE;
+					}
+
+					// Vertex Shader
+					{
+						vkDestroyShaderModule(device, litVertexShader, nullptr);
+						SA_LOG(L"Destroy Lit Vertex Shader success.", Info, VK, litVertexShader);
+						litVertexShader = VK_NULL_HANDLE;
+					}
+
+					// Pipeline Layout
+					{
+						vkDestroyPipelineLayout(device, litPipelineLayout, nullptr);
+						SA_LOG(L"Destroy Lit PipelineLayout success.", Info, VK, litPipelineLayout);
+						litPipelineLayout = VK_NULL_HANDLE;
+					}
+				}
+			}
+
+
 			// Framebuffers
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)

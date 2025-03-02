@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 
 project(FromVulkanToDirectX12)
 
@@ -15,7 +15,7 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}")
 
 
 
-# Target mainDX12
+# ===== Target mainDX12 =====
 add_executable(FVTDX12_mainDX12 "Sources/mainDX12.cpp")
 
 target_compile_features(FVTDX12_mainDX12 PRIVATE c_std_11 cxx_std_20)
@@ -34,14 +34,15 @@ add_custom_command(
 
 
 
-# Target mainVK
+# ===== Target mainVK =====
 add_executable(FVTDX12_mainVK "Sources/mainVK.cpp")
 
 target_compile_features(FVTDX12_mainVK PRIVATE c_std_11 cxx_std_20)
 target_compile_options(FVTDX12_mainVK PRIVATE /W4 /WX)
 
-find_package(Vulkan REQUIRED)
-target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan)
+
+find_package(Vulkan REQUIRED COMPONENTS shaderc_combined) # https://cmake.org/cmake/help/latest/module/FindVulkan.html
+target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan Vulkan::shaderc_combined)
 target_link_libraries(FVTDX12_mainVK PUBLIC glfw assimp stb SA_Logger SA_Maths)
 
 add_custom_command(
@@ -54,7 +55,7 @@ add_custom_command(
 
 
 
-# ThirdParty
+# ===== ThirdParty =====
 add_subdirectory(ThirdParty/glfw)
 
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "Disable assimp built as shared libraries")
