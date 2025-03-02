@@ -57,7 +57,9 @@ bool CompileShaderFromFile(const std::string& _path, shaderc_shader_kind _stage,
 
 	shaderc::CompileOptions options;
 
-#if !SA_DEBUG
+#if SA_DEBUG
+	options.SetOptimizationLevel(shaderc_optimization_level_zero);
+#else
 	options.SetOptimizationLevel(shaderc_optimization_level_performance);
 #endif
 
@@ -270,6 +272,10 @@ VkRenderPass renderPass = VK_NULL_HANDLE;
 
 // === Frame Buffer ===
 std::array<VkFramebuffer, bufferingCount> framebuffers{ VK_NULL_HANDLE };
+
+
+// === DescriptorSet ===
+VkDescriptorSetLayout litDescSetLayout = VK_NULL_HANDLE;
 
 
 // === Pipeline ===
@@ -1104,7 +1110,7 @@ int main()
 
 				const VkAttachmentReference depthAttachmentRef{
 					.attachment = 1,
-					.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+					.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 				};
 
 				const VkSubpassDescription subpass{
@@ -1190,6 +1196,84 @@ int main()
 			}
 
 
+			// DescriptorSet
+			{
+				// Lit
+				{
+					std::array<VkDescriptorSetLayoutBinding, 7> bindings{
+						VkDescriptorSetLayoutBinding{ // Camera buffer
+							.binding = 0,
+							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // Object buffer
+							.binding = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // PBR Albedo
+							.binding = 2,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // PBR NormalMap
+							.binding = 3,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // PBR MetallicMap
+							.binding = 4,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // PBR RoughnessMap
+							.binding = 5,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+						VkDescriptorSetLayoutBinding{ // PointLights buffer
+							.binding = 6,
+							.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+							.descriptorCount = 1,
+							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+							.pImmutableSamplers = nullptr,
+						},
+					};
+
+					const VkDescriptorSetLayoutCreateInfo layoutInfo{
+						.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.bindingCount = static_cast<uint32_t>(bindings.size()),
+						.pBindings = bindings.data(),
+					};
+
+					const VkResult vrDescLayoutCreated = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &litDescSetLayout);
+					if (vrDescLayoutCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Lit DescriptorSet Layout failed!", Error, VK, (L"Error Code: %1", vrDescLayoutCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Lit DescriptorSet Layout success.", Info, VK, litDescSetLayout);
+					}
+				}
+			}
+
+
 			// Pipeline
 			{
 				// Viewport & Scissor
@@ -1218,8 +1302,8 @@ int main()
 							.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 							.pNext = nullptr,
 							.flags = 0,
-							.setLayoutCount = 0u,
-							.pSetLayouts = nullptr,
+							.setLayoutCount = 1u,
+							.pSetLayouts = &litDescSetLayout,
 							.pushConstantRangeCount = 0u,
 							.pPushConstantRanges = nullptr,
 						};
@@ -1247,7 +1331,7 @@ int main()
 							.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 							.pNext = nullptr,
 							.flags = 0u,
-							.codeSize = static_cast<uint32_t>(shCode.size()),
+							.codeSize = static_cast<uint32_t>(shCode.size()) * sizeof(uint32_t),
 							.pCode = shCode.data(),
 						};
 
@@ -1273,7 +1357,7 @@ int main()
 							.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
 							.pNext = nullptr,
 							.flags = 0u,
-							.codeSize = static_cast<uint32_t>(shCode.size()),
+							.codeSize = static_cast<uint32_t>(shCode.size()) * sizeof(uint32_t),
 							.pCode = shCode.data(),
 						};
 
@@ -1314,22 +1398,22 @@ int main()
 						};
 
 						const std::array<VkVertexInputBindingDescription, 4> vertexInputBindings{
-							VkVertexInputBindingDescription{ // Position
+							VkVertexInputBindingDescription{ // Position buffer
 								.binding = 0,
 								.stride = sizeof(SA::Vec3f),
 								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
 							},
-							VkVertexInputBindingDescription{ // Normal
+							VkVertexInputBindingDescription{ // Normal buffer
 								.binding = 1,
 								.stride = sizeof(SA::Vec3f),
 								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
 							},
-							VkVertexInputBindingDescription{ // Tangent
+							VkVertexInputBindingDescription{ // Tangent buffer
 								.binding = 2,
 								.stride = sizeof(SA::Vec3f),
 								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
 							},
-							VkVertexInputBindingDescription{ // UV
+							VkVertexInputBindingDescription{ // UV buffer
 								.binding = 3,
 								.stride = sizeof(SA::Vec2f),
 								.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
@@ -1337,27 +1421,27 @@ int main()
 						};
 
 						const std::array<VkVertexInputAttributeDescription, 4> vertexInputAttribs{
-							VkVertexInputAttributeDescription{ // Position
+							VkVertexInputAttributeDescription{ // Position Input
 								.location = 0u,
 								.binding = 0u,
 								.format = VK_FORMAT_R32G32B32_SFLOAT,
 								.offset = 0u,
 							},
-							VkVertexInputAttributeDescription{ // Normal
+							VkVertexInputAttributeDescription{ // Normal Input
 								.location = 1u,
-								.binding = 0u,
+								.binding = 1u,
 								.format = VK_FORMAT_R32G32B32_SFLOAT,
 								.offset = 0u,
 							},
-							VkVertexInputAttributeDescription{ // Tangent
+							VkVertexInputAttributeDescription{ // Tangent Input
 								.location = 2u,
-								.binding = 0u,
+								.binding = 2u,
 								.format = VK_FORMAT_R32G32B32_SFLOAT,
 								.offset = 0u,
 							},
-							VkVertexInputAttributeDescription{ // UV
+							VkVertexInputAttributeDescription{ // UV Input
 								.location = 3u,
-								.binding = 0u,
+								.binding = 3u,
 								.format = VK_FORMAT_R32G32_SFLOAT,
 								.offset = 0u,
 							},
@@ -1434,7 +1518,7 @@ int main()
 							.maxDepthBounds = 1.0f,
 						};
 
-						const std::array<VkPipelineColorBlendAttachmentState, 1> colorBlandAttachs{
+						const std::array<VkPipelineColorBlendAttachmentState, 1> colorBlendAttachs{
 							VkPipelineColorBlendAttachmentState{
 								.blendEnable = VK_FALSE,
 								.srcColorBlendFactor = VK_BLEND_FACTOR_ONE,
@@ -1456,8 +1540,8 @@ int main()
 							.flags = 0u,
 							.logicOpEnable = VK_FALSE,
 							.logicOp = VK_LOGIC_OP_COPY,
-							.attachmentCount = static_cast<uint32_t>(colorBlandAttachs.size()),
-							.pAttachments = colorBlandAttachs.data(),
+							.attachmentCount = static_cast<uint32_t>(colorBlendAttachs.size()),
+							.pAttachments = colorBlendAttachs.data(),
 							.blendConstants = { 0.0f },
 						};
 
@@ -1556,6 +1640,17 @@ int main()
 						SA_LOG(L"Destroy Lit PipelineLayout success.", Info, VK, litPipelineLayout);
 						litPipelineLayout = VK_NULL_HANDLE;
 					}
+				}
+			}
+
+
+			// DescriptorSet
+			{
+				// Lit
+				{
+					vkDestroyDescriptorSetLayout(device, litDescSetLayout, nullptr);
+					SA_LOG(L"Destroy Lit DescriptorSetLayout success.", Info, VK, litDescSetLayout);
+					litDescSetLayout = VK_NULL_HANDLE;
 				}
 			}
 

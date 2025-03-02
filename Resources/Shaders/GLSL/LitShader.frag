@@ -30,10 +30,10 @@ const float PI = 3.14159265359;
 
 
 //---------- Bindings ----------
-layout(binding = 0) uniform sampler2D albedo;
-layout(binding = 1) uniform sampler2D normalMap;
-layout(binding = 2) uniform sampler2D metallicMap;
-layout(binding = 3) uniform sampler2D roughnessMap;
+layout(binding = 2) uniform sampler2D albedo;
+layout(binding = 3) uniform sampler2D normalMap;
+layout(binding = 4) uniform sampler2D metallicMap;
+layout(binding = 5) uniform sampler2D roughnessMap;
 
 struct PointLight
 {
@@ -46,7 +46,7 @@ struct PointLight
 	float radius;
 };
 
-layout(binding = 4) buffer pointLightBuffer
+layout(binding = 6) readonly buffer pointLightBuffer
 {
 	PointLight lights[];
 } pointLights;
