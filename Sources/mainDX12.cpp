@@ -577,6 +577,7 @@ MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
 int main()
 {
 	// Initialization
+	if (true)
 	{
 		SA::Debug::InitDefaultLogger();
 
@@ -2211,12 +2212,273 @@ int main()
 
 
 	// Loop
+	if (true)
 	{
+		double oldMouseX = 0.0f;
+		double oldMouseY = 0.0f;
+		float dx = 0.0f;
+		float dy = 0.0f;
+
+		glfwGetCursorPos(window, &oldMouseX, &oldMouseY);
+
+		const float fixedTime = 0.0025f;
+		float accumulateTime = 0.0f;
+		auto start = std::chrono::steady_clock::now();
+
+		while (!glfwWindowShouldClose(window))
+		{
+			auto end = std::chrono::steady_clock::now();
+			float deltaTime = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(end - start).count();
+			accumulateTime += deltaTime;
+			start = end;
+
+			// Fixed Update
+			if (accumulateTime >= fixedTime)
+			{
+				accumulateTime -= fixedTime;
+
+				glfwPollEvents();
+
+				// Process input
+				{
+					if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+						glfwSetWindowShouldClose(window, true);
+					if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Forward();
+					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Forward();
+
+					double mouseX = 0.0f;
+					double mouseY = 0.0f;
+
+					glfwGetCursorPos(window, &mouseX, &mouseY);
+
+					if (mouseX != oldMouseX || mouseY != oldMouseY)
+					{
+						dx += static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dy += static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+
+						oldMouseX = mouseX;
+						oldMouseY = mouseY;
+
+						dx = dx > SA::Maths::Pi<float> ?
+							dx - SA::Maths::Pi<float> :
+							dx < -SA::Maths::Pi<float> ? dx + SA::Maths::Pi<float> : dx;
+						dy = dy > SA::Maths::Pi<float> ?
+							dy - SA::Maths::Pi<float> :
+							dy < -SA::Maths::Pi<float> ? dy + SA::Maths::Pi<float> : dy;
+
+						cameraTr.rotation = SA::Quatf(cos(dx), 0, sin(dx), 0) * SA::Quatf(cos(dy), sin(dy), 0, 0);
+					}
+				}
+			}
+
+			// Render
+			{
+				// Swapchain Begin
+				{
+					const UINT32 prevFenceValue = swapchainFenceValues[swapchainFrameIndex];
+
+					// Update frame index.
+					swapchainFrameIndex = swapchain->GetCurrentBackBufferIndex();
+
+					const UINT32 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
+
+
+					// If the next frame is not ready to be rendered yet, wait until it is ready.
+					if (swapchainFence->GetCompletedValue() < currFenceValue)
+					{
+						const HRESULT hrSetEvent = swapchainFence->SetEventOnCompletion(currFenceValue, swapchainFenceEvent);
+						if (FAILED(hrSetEvent))
+						{
+							SA_LOG(L"Fence SetEventOnCompletion failed.", Error, DX12, (L"Error code: %1", hrSetEvent));
+							return EXIT_FAILURE;
+						}
+
+						WaitForSingleObjectEx(swapchainFenceEvent, INFINITE, FALSE);
+					}
+
+					// Set the fence value for the next frame.
+					swapchainFenceValues[swapchainFrameIndex] = prevFenceValue + 1;
+				}
+
+
+				// Update camera.
+				auto cameraBuffer = cameraBuffers[swapchainFrameIndex];
+				{
+
+					// Fill Data with updated values.
+					CameraUBO cameraUBO;
+					cameraUBO.view = cameraTr.Matrix();
+					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
+					cameraUBO.invViewProj = perspective * cameraUBO.view.GetInversed();
+
+					// Memory mapping and Upload (CPU to GPU transfer).
+					const D3D12_RANGE range{ .Begin = 0, .End = 0 };
+					void* data = nullptr;
+
+					cameraBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
+					std::memcpy(data, &cameraUBO, sizeof(CameraUBO));
+					cameraBuffer->Unmap(0, nullptr);
+				}
+
+
+				// Register Commands
+				{
+					auto cmd = cmdLists[swapchainFrameIndex];
+
+					cmdAlloc->Reset();
+					cmd->Reset(cmdAlloc.Get(), nullptr);
+
+					auto sceneColorRT = swapchainImages[swapchainFrameIndex];
+
+					/**
+					* Manage Render Targets for render:
+					* Vulkan uses vkRenderPass and vkFramebuffers to describe in advance how the render targets should be managed through passes and subpasses.
+					* DirectX12 doesn't have such system and must manage RenderTargets manually.
+					*/
+					{
+						// Color Transition to RenderTarget.
+						const D3D12_RESOURCE_BARRIER barrier{
+							.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+							.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
+							.Transition = {
+								.pResource = sceneColorRT.Get(),
+								.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+								.StateBefore = D3D12_RESOURCE_STATE_COMMON,
+								.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET,
+							},
+						};
+
+						cmd->ResourceBarrier(1, &barrier);
+
+
+						// Clear
+						{
+							// Access current frame allocated view.
+							D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = sceneRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+							const UINT rtvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+							rtvHandle.ptr += rtvOffset * swapchainFrameIndex;
+
+							const D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = sceneDepthRTViewHeap->GetCPUDescriptorHandleForHeapStart();
+
+							cmd->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+							cmd->ClearRenderTargetView(rtvHandle, sceneClearColor, 0, nullptr);
+							cmd->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, sceneDepthClearValue.DepthStencil.Depth, sceneDepthClearValue.DepthStencil.Stencil, 0, nullptr);
+						}
+					}
+
+
+					// Pipeline commons
+					cmd->RSSetViewports(1, &viewport);
+					cmd->RSSetScissorRects(1, &scissorRect);
+
+
+					// Lit Pipeline
+					{
+						/**
+						* Bind heaps.
+						* /!\ Only one heaps of each type can be bound!
+						*/
+						ID3D12DescriptorHeap* descriptorHeaps[] = { pbrSphereSRVHeap.Get() };
+						cmd->SetDescriptorHeaps(_countof(descriptorHeaps), descriptorHeaps);
+
+
+						/**
+						* DirectX12 doesn't have DescriptorSet: manually bind each entry of the RootSignature.
+						*/
+						cmd->SetGraphicsRootSignature(litRootSign.Get());
+						cmd->SetGraphicsRootConstantBufferView(0, cameraBuffer->GetGPUVirtualAddress()); // Camera UBO
+						cmd->SetGraphicsRootConstantBufferView(1, sphereObjectBuffer->GetGPUVirtualAddress()); // Object UBO
+
+						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+						D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = pbrSphereSRVHeap->GetGPUDescriptorHandleForHeapStart();
+
+						/**
+						* Use DescriptorTable with SRV type instead of direct SRV binding to create BufferView in SRV Heap.
+						* This allows use to correctly call pointLights.GetDimensions() in HLSL.
+						*/
+						//cmd->SetGraphicsRootShaderResourceView(2, pointLightBuffer->GetGPUVirtualAddress()); // PointLights
+						cmd->SetGraphicsRootDescriptorTable(2, gpuHandle); // PointLights
+						gpuHandle.ptr += srvOffset;
+
+						cmd->SetGraphicsRootDescriptorTable(3, gpuHandle); // PBR textures
+						gpuHandle.ptr += srvOffset;
+
+
+						cmd->SetPipelineState(litPipelineState.Get());
+
+						// Draw Sphere
+						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+						cmd->IASetVertexBuffers(0, static_cast<UINT>(sphereVertexBufferViews.size()), sphereVertexBufferViews.data());
+						cmd->IASetIndexBuffer(&sphereIndexBufferView);
+						cmd->DrawIndexedInstanced(sphereIndexCount, 1, 0, 0, 0);
+					}
+
+
+					// Manage RenderTargets for present.
+					{
+						// Color Transition to Present.
+						const D3D12_RESOURCE_BARRIER barrier{
+							.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
+							.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
+							.Transition = {
+								.pResource = sceneColorRT.Get(),
+								.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+								.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET,
+								.StateAfter = D3D12_RESOURCE_STATE_PRESENT,
+							},
+						};
+
+						cmd->ResourceBarrier(1, &barrier);
+					}
+
+
+					cmd->Close();
+
+					// Execute the command list.
+					ID3D12CommandList* ppCommandLists[] = { cmd.Get() };
+					graphicsQueue->ExecuteCommandLists(_countof(ppCommandLists), ppCommandLists);
+				}
+
+
+				// Swapchain End
+				{
+					// Automatically present using internal present Queue if possible.
+					const HRESULT hrPresent = swapchain->Present(1, 0);
+					if (FAILED(hrPresent))
+					{
+						SA_LOG(L"Swapchain Present failed", Error, DX12, (L"Error code: %1", hrPresent));
+						return EXIT_FAILURE;
+					}
+
+					// Schedule a Signal command in the queue.
+					const UINT64 currFenceValue = swapchainFenceValues[swapchainFrameIndex];
+					const HRESULT hrFenceSignal = graphicsQueue->Signal(swapchainFence.Get(), currFenceValue);
+					if (FAILED(hrFenceSignal))
+					{
+						SA_LOG(L"Swapchain Fence Signal failed", Error, DX12, (L"Error code: %1", hrFenceSignal));
+						return EXIT_FAILURE;
+					}
+				}
+			}
+
+			SA_LOG_END_OF_FRAME();
+		}
 	}
 
 
 
 	// Uninitialization
+	if(true)
 	{
 		// Renderer
 		{
