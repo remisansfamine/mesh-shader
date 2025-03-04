@@ -154,6 +154,8 @@ constexpr uint32_t bufferingCount = 3;
 VkSwapchainKHR swapchain = VK_NULL_HANDLE;
 std::array<VkImage, bufferingCount> swapchainImages{ VK_NULL_HANDLE };
 std::array<VkImageView, bufferingCount> swapchainImageViews{ VK_NULL_HANDLE };
+uint32_t swapchainFrameIndex = 0u;
+uint32_t swapchainImageIndex = 0u;
 
 struct SwapchainSynchronisation
 {
@@ -174,10 +176,16 @@ std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
 
 // = Color =
 VkFormat sceneColorFormat = VK_FORMAT_R8G8B8_SRGB;
+const VkClearValue sceneClearColor{
+	.color = { 0.0f, 0.1f, 0.2f, 1.0f },
+};
 // Use Swapchain backbuffer texture as color output.
 
 // = Depth =
 const VkFormat sceneDepthFormat = VK_FORMAT_D16_UNORM;
+const VkClearValue sceneClearDepth{
+	.depthStencil = { 1.0f, 0u },
+};
 
 VkImage sceneDepthImage = VK_NULL_HANDLE;
 VkDeviceMemory sceneDepthImageMemory = VK_NULL_HANDLE;
@@ -3497,6 +3505,232 @@ int main()
 
 	// Loop
 	{
+		double oldMouseX = 0.0f;
+		double oldMouseY = 0.0f;
+		float dx = 0.0f;
+		float dy = 0.0f;
+
+		glfwGetCursorPos(window, &oldMouseX, &oldMouseY);
+
+		const float fixedTime = 0.0025f;
+		float accumulateTime = 0.0f;
+		auto start = std::chrono::steady_clock::now();
+
+		while (!glfwWindowShouldClose(window))
+		{
+			auto end = std::chrono::steady_clock::now();
+			float deltaTime = std::chrono::duration_cast<std::chrono::duration<float, std::milli>>(end - start).count();
+			accumulateTime += deltaTime;
+			start = end;
+
+			// Fixed Update
+			if (accumulateTime >= fixedTime)
+			{
+				accumulateTime -= fixedTime;
+
+				glfwPollEvents();
+
+				// Process input
+				{
+					if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+						glfwSetWindowShouldClose(window, true);
+					if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Right();
+					if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Up();
+					if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+						cameraTr.position += fixedTime * cameraMoveSpeed * cameraTr.Forward();
+					if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+						cameraTr.position -= fixedTime * cameraMoveSpeed * cameraTr.Forward();
+
+					double mouseX = 0.0f;
+					double mouseY = 0.0f;
+
+					glfwGetCursorPos(window, &mouseX, &mouseY);
+
+					if (mouseX != oldMouseX || mouseY != oldMouseY)
+					{
+						dx += static_cast<float>(mouseX - oldMouseX) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+						dy += static_cast<float>(mouseY - oldMouseY) * fixedTime * cameraRotSpeed * SA::Maths::DegToRad<float>;
+
+						oldMouseX = mouseX;
+						oldMouseY = mouseY;
+
+						dx = dx > SA::Maths::Pi<float> ?
+							dx - SA::Maths::Pi<float> :
+							dx < -SA::Maths::Pi<float> ? dx + SA::Maths::Pi<float> : dx;
+						dy = dy > SA::Maths::Pi<float> ?
+							dy - SA::Maths::Pi<float> :
+							dy < -SA::Maths::Pi<float> ? dy + SA::Maths::Pi<float> : dy;
+
+						cameraTr.rotation = SA::Quatf(cos(dx), 0, sin(dx), 0) * SA::Quatf(cos(dy), sin(dy), 0, 0);
+					}
+				}
+			}
+
+
+			// Render
+			{
+				// Swapchain Begin
+				{
+					// Wait current Fence.
+					vkWaitForFences(device, 1, &swapchainSyncs[swapchainFrameIndex].fence, true, UINT64_MAX);
+
+					// Reset current Fence.
+					vkResetFences(device, 1, &swapchainSyncs[swapchainFrameIndex].fence);
+
+					const VkResult vrAcqImage = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainSyncs[swapchainFrameIndex].acquireSemaphore, VK_NULL_HANDLE, &swapchainImageIndex);
+					if (vrAcqImage != VK_SUCCESS)
+					{
+						SA_LOG(L"Swapchain Acquire Next Image failed!", Error, VK, (L"Error code: %1", vrAcqImage));
+						return EXIT_FAILURE;
+					}
+				}
+
+
+				// Update camera.
+				{
+
+					// Fill Data with updated values.
+					CameraUBO cameraUBO;
+					cameraUBO.view = cameraTr.Matrix();
+					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
+					cameraUBO.invViewProj = perspective * cameraUBO.view.GetInversed();
+
+					// Memory mapping and Upload (CPU to GPU transfer).
+					void* data = nullptr;
+					vkMapMemory(device, cameraBufferMemories[swapchainFrameIndex], 0u, sizeof(CameraUBO), 0u, &data);
+
+					std::memcpy(data, &cameraUBO, sizeof(CameraUBO));
+					
+					vkUnmapMemory(device, cameraBufferMemories[swapchainFrameIndex]);
+				}
+
+
+				// Register Commands
+				auto cmd = cmdBuffers[swapchainFrameIndex];
+				{
+					vkResetCommandBuffer(cmd, 0);
+
+					const VkCommandBufferBeginInfo beginInfo{
+						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+						.pNext = nullptr,
+						.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+						.pInheritanceInfo = nullptr,
+					};
+					vkBeginCommandBuffer(cmd, &beginInfo);
+
+
+					// RenderPass Begin
+					std::array<VkClearValue, 2> clears{
+						sceneClearColor,
+						sceneClearDepth
+					};
+
+					const VkRenderPassBeginInfo renderPassInfo{
+						.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+						.pNext = nullptr,
+						.renderPass = renderPass,
+						.framebuffer = framebuffers[swapchainImageIndex],
+						.renderArea{
+							.offset = { 0, 0 },
+							.extent = { windowSize.x, windowSize.y },
+						},
+						.clearValueCount = static_cast<uint32_t>(clears.size()),
+						.pClearValues = clears.data(),
+					};
+
+					vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+
+					// Lit Pipeline
+					vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, litPipeline);
+
+					vkCmdSetViewport(cmd, 0, 1, &viewport);
+					vkCmdSetScissor(cmd, 0, 1, &scissorRect);
+
+
+					// Draw Sphere
+					std::array<VkDeviceSize, 4> offsets{ 0 };
+					vkCmdBindVertexBuffers(cmd, 0,
+						static_cast<uint32_t>(sphereVertexBuffers.size()),
+						sphereVertexBuffers.data(),
+						offsets.data());
+					vkCmdBindIndexBuffer(cmd, sphereIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
+
+					vkCmdBindDescriptorSets(cmd,
+						VK_PIPELINE_BIND_POINT_GRAPHICS,
+						litPipelineLayout, 0, 1,
+						&pbrSphereDescSets[swapchainFrameIndex],
+						0, nullptr);
+
+					vkCmdDrawIndexed(cmd, sphereIndexCount, 1, 0, 0, 0);
+
+
+					// End Renderpass
+					vkCmdEndRenderPass(cmd);
+
+					vkEndCommandBuffer(cmd);
+				}
+
+
+				// Swapchain End
+				{
+					// Submit graphics.
+					{
+						const VkPipelineStageFlags waitStages = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+						const VkSubmitInfo submitInfo{
+							.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+							.pNext = nullptr,
+							.waitSemaphoreCount = 1u,
+							.pWaitSemaphores = &swapchainSyncs[swapchainFrameIndex].acquireSemaphore,
+							.pWaitDstStageMask = &waitStages,
+							.commandBufferCount = 1,
+							.pCommandBuffers = &cmd,
+							.signalSemaphoreCount = 1u,
+							.pSignalSemaphores = &swapchainSyncs[swapchainFrameIndex].presentSemaphore,
+						};
+
+						const VkResult vrQueueSubmit = vkQueueSubmit(graphicsQueue, 1, &submitInfo, swapchainSyncs[swapchainFrameIndex].fence);
+						if (vrQueueSubmit != VK_SUCCESS)
+						{
+							SA_LOG(L"Failed to submit graphics queue!", Error, VK, (L"Error code: %1", vrQueueSubmit));
+							return EXIT_FAILURE;
+						}
+					}
+
+
+					// Submit present.
+					{
+						const VkPresentInfoKHR presentInfo{
+							.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+							.pNext = nullptr,
+							.waitSemaphoreCount = 1u,
+							.pWaitSemaphores = &swapchainSyncs[swapchainFrameIndex].presentSemaphore,
+							.swapchainCount = 1u,
+							.pSwapchains = &swapchain,
+							.pImageIndices = &swapchainImageIndex,
+							.pResults = nullptr,
+						};
+
+						const VkResult vrQueuePresent = vkQueuePresentKHR(presentQueue, &presentInfo);
+						if (vrQueuePresent != VK_SUCCESS)
+						{
+							SA_LOG(L"Failed to submit present queue!", Error, VK, (L"Error code: %1", vrQueuePresent));
+							return EXIT_FAILURE;
+						}
+					}
+
+					// Increment next frame.
+					swapchainFrameIndex = (swapchainFrameIndex + 1) % bufferingCount;
+				}
+			}
+		}
 	}
 
 
@@ -3505,6 +3739,9 @@ int main()
 	{
 		// Renderer
 		{
+			vkDeviceWaitIdle(device);
+
+
 			// Resources
 			{
 				// Samplers
@@ -3613,6 +3850,7 @@ int main()
 
 
 			// Scene Objects
+			if (true)
 			{
 				// PointLights
 				vkDestroyBuffer(device, pointLightBuffer, nullptr);
