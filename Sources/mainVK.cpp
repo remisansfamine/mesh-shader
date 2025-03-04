@@ -228,6 +228,8 @@ VkPipeline litPipeline = VK_NULL_HANDLE;
 // === Scene Objects ===
 
 // = DescriptorSets =
+VkDescriptorPool pbrSphereDescPool = VK_NULL_HANDLE;
+std::array<VkDescriptorSet, bufferingCount> pbrSphereDescSets{ VK_NULL_HANDLE };
 
 // = Camera Buffer =
 struct CameraUBO
@@ -702,14 +704,23 @@ VkBuffer sphereIndexBuffer = VK_NULL_HANDLE;
 VkDeviceMemory sphereIndexBufferMemory = VK_NULL_HANDLE;
 
 // = RustedIron2 PBR =
+VkSampler rustedIron2Sampler = VK_NULL_HANDLE;
+
 VkImage rustedIron2AlbedoImage = VK_NULL_HANDLE;
 VkDeviceMemory rustedIron2AlbedoImageMemory = VK_NULL_HANDLE;
+VkImageView rustedIron2AlbedoImageView = VK_NULL_HANDLE;
+
 VkImage rustedIron2NormalImage = VK_NULL_HANDLE;
 VkDeviceMemory rustedIron2NormalImageMemory = VK_NULL_HANDLE;
+VkImageView rustedIron2NormalImageView = VK_NULL_HANDLE;
+
 VkImage rustedIron2MetallicImage = VK_NULL_HANDLE;
 VkDeviceMemory rustedIron2MetallicImageMemory = VK_NULL_HANDLE;
+VkImageView rustedIron2MetallicImageView = VK_NULL_HANDLE;
+
 VkImage rustedIron2RoughnessImage = VK_NULL_HANDLE;
 VkDeviceMemory rustedIron2RoughnessImageMemory = VK_NULL_HANDLE;
+VkImageView rustedIron2RoughnessImageView = VK_NULL_HANDLE;
 
 
 int main()
@@ -2029,224 +2040,6 @@ int main()
 			vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
 
 
-			// Scene Objects
-			if (true)
-			{
-				// Camera Buffers
-				{
-					const VkBufferCreateInfo bufferInfo{
-						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-						.pNext = nullptr,
-						.flags = 0u,
-						.size = sizeof(CameraUBO),
-						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-						.queueFamilyIndexCount = 0u,
-						.pQueueFamilyIndices = nullptr,
-					};
-
-					for (uint32_t i = 0; i < bufferingCount; ++i)
-					{
-						const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &cameraBuffers[i]);
-						if (vrBufferCreated != VK_SUCCESS)
-						{
-							SA_LOG((L"Create Camera Buffer [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferCreated));
-							return EXIT_FAILURE;
-						}
-						else
-						{
-							SA_LOG((L"Create Camera Buffer [%1] success", i), Info, VK, cameraBuffers[i]);
-						}
-
-
-						// Memory
-						VkMemoryRequirements memRequirements;
-						vkGetBufferMemoryRequirements(device, cameraBuffers[i], &memRequirements);
-
-						const VkMemoryAllocateInfo allocInfo{
-							.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-							.pNext = nullptr,
-							.allocationSize = memRequirements.size,
-							.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
-						};
-
-						const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemories[i]);
-						if (vrBufferAlloc != VK_SUCCESS)
-						{
-							SA_LOG((L"Create Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferAlloc));
-							return EXIT_FAILURE;
-						}
-						else
-						{
-							SA_LOG((L"Create Camera Buffer Memory [%1] success", i), Info, VK, cameraBufferMemories[i]);
-						}
-
-
-						const VkResult vrBindBufferMem = vkBindBufferMemory(device, cameraBuffers[i], cameraBufferMemories[i], 0);
-						if (vrBindBufferMem != VK_SUCCESS)
-						{
-							SA_LOG((L"Bind Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBindBufferMem));
-							return EXIT_FAILURE;
-						}
-						else
-						{
-							SA_LOG((L"Bind Camera Buffer Memory [%1] success", i), Info, VK);
-						}
-					}
-				}
-
-				// Sphere Object Buffer
-				{
-					const VkBufferCreateInfo bufferInfo{
-						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-						.pNext = nullptr,
-						.flags = 0u,
-						.size = sizeof(ObjectUBO),
-						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-						.queueFamilyIndexCount = 0u,
-						.pQueueFamilyIndices = nullptr,
-					};
-
-					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereObjectBuffer);
-					if (vrBufferCreated != VK_SUCCESS)
-					{
-						SA_LOG(L"Create Sphere Object Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Create Sphere Object Buffer success", Info, VK, sphereObjectBuffer);
-					}
-
-
-					// Memory
-					VkMemoryRequirements memRequirements;
-					vkGetBufferMemoryRequirements(device, sphereObjectBuffer, &memRequirements);
-
-					const VkMemoryAllocateInfo allocInfo{
-						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-						.pNext = nullptr,
-						.allocationSize = memRequirements.size,
-						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-					};
-
-					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereObjectBufferMemory);
-					if (vrBufferAlloc != VK_SUCCESS)
-					{
-						SA_LOG(L"Create Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Create Object Buffer Memory success", Info, VK, sphereObjectBufferMemory);
-					}
-
-
-					const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereObjectBuffer, sphereObjectBufferMemory, 0);
-					if (vrBindBufferMem != VK_SUCCESS)
-					{
-						SA_LOG(L"Bind Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Bind Object Buffer Memory success", Info, VK);
-					}
-
-					// Submit
-					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
-					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, &transform);
-					if (!bSubmitSuccess)
-					{
-						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
-						return EXIT_FAILURE;
-					}
-				}
-
-				// PointLights Buffer
-				{
-					const VkBufferCreateInfo bufferInfo{
-						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-						.pNext = nullptr,
-						.flags = 0u,
-						.size = pointLightNum * sizeof(PointLightUBO),
-						.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-						.queueFamilyIndexCount = 0u,
-						.pQueueFamilyIndices = nullptr,
-					};
-
-					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &pointLightBuffer);
-					if (vrBufferCreated != VK_SUCCESS)
-					{
-						SA_LOG(L"Create PointLights Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Create PointLights Buffer success", Info, VK, pointLightBuffer);
-					}
-
-
-					// Memory
-					VkMemoryRequirements memRequirements;
-					vkGetBufferMemoryRequirements(device, pointLightBuffer, &memRequirements);
-
-					const VkMemoryAllocateInfo allocInfo{
-						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-						.pNext = nullptr,
-						.allocationSize = memRequirements.size,
-						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
-					};
-
-					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &pointLightBufferMemory);
-					if (vrBufferAlloc != VK_SUCCESS)
-					{
-						SA_LOG(L"Create PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Create PointLights Buffer Memory success", Info, VK, pointLightBufferMemory);
-					}
-
-
-					const VkResult vrBindBufferMem = vkBindBufferMemory(device, pointLightBuffer, pointLightBufferMemory, 0);
-					if (vrBindBufferMem != VK_SUCCESS)
-					{
-						SA_LOG(L"Bind PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Bind PointLights Buffer Memory success", Info, VK);
-					}
-
-					// Submit
-					std::array<PointLightUBO, pointLightNum> pointlightsUBO{
-						PointLightUBO{
-							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
-							.intensity = 4.0f,
-							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
-							.radius = 3.0f
-						},
-						PointLightUBO{
-							.position = SA::Vec3f(1.75f, 2.0f, 1.0f),
-							.intensity = 7.0f,
-							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
-							.radius = 4.0f
-						}
-					};
-					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, pointlightsUBO.data());
-					if (!bSubmitSuccess)
-					{
-						SA_LOG(L"PointLights Buffer submit failed!", Error, DX12);
-						return EXIT_FAILURE;
-					}
-				}
-			}
-
 			// Resources
 			if (true)
 			{
@@ -2627,10 +2420,12 @@ int main()
 				}
 
 				// Textures
+				if (true)
 				{
 					stbi_set_flip_vertically_on_load(true);
 
 					// Albedo
+					if (true)
 					{
 						const char* path = "Resources/Textures/RustedIron2/rustediron2_basecolor.png";
 
@@ -2666,7 +2461,7 @@ int main()
 								.pNext = nullptr,
 								.flags = 0u,
 								.imageType = VK_IMAGE_TYPE_2D,
-								.format = VK_FORMAT_R8G8B8A8_UINT,
+								.format = VK_FORMAT_R8G8B8A8_UNORM,
 								.extent{
 									.width = static_cast<uint32_t>(width),
 									.height = static_cast<uint32_t>(height),
@@ -2734,6 +2529,42 @@ int main()
 							}
 						}
 
+						// Image View
+						{
+							const VkImageViewCreateInfo viewInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.image = rustedIron2AlbedoImage,
+								.viewType = VK_IMAGE_VIEW_TYPE_2D,
+								.format = VK_FORMAT_R8G8B8A8_UNORM,
+								.components{
+									.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.a = VK_COMPONENT_SWIZZLE_IDENTITY
+								},
+								.subresourceRange{
+									.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+									.baseMipLevel = 0,
+									.levelCount = mipLevels,
+									.baseArrayLayer = 0,
+									.layerCount = 1,
+								},
+							};
+
+							const VkResult vrImageViewCreated = vkCreateImageView(device, &viewInfo, nullptr, &rustedIron2AlbedoImageView);
+							if (vrImageViewCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron Albedo ImageView failed!", Error, VK, (L"Error Code: %1", vrImageViewCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron Albedo ImageView success.", Info, VK, rustedIron2AlbedoImageView);
+							}
+						}
+
 						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoImage, mipExtents, totalSize, data.data());
 						if (!bSubmitSuccess)
 						{
@@ -2745,6 +2576,7 @@ int main()
 					}
 
 					// Normal
+					if (true)
 					{
 						const char* path = "Resources/Textures/RustedIron2/rustediron2_normal.png";
 
@@ -2781,7 +2613,7 @@ int main()
 								.pNext = nullptr,
 								.flags = 0u,
 								.imageType = VK_IMAGE_TYPE_2D,
-								.format = VK_FORMAT_R8G8B8A8_UINT,
+								.format = VK_FORMAT_R8G8B8A8_UNORM,
 								.extent{
 									.width = static_cast<uint32_t>(width),
 									.height = static_cast<uint32_t>(height),
@@ -2849,6 +2681,42 @@ int main()
 							}
 						}
 
+						// Image View
+						{
+							const VkImageViewCreateInfo viewInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.image = rustedIron2NormalImage,
+								.viewType = VK_IMAGE_VIEW_TYPE_2D,
+								.format = VK_FORMAT_R8G8B8A8_UNORM,
+								.components{
+									.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.a = VK_COMPONENT_SWIZZLE_IDENTITY
+								},
+								.subresourceRange{
+									.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+									.baseMipLevel = 0,
+									.levelCount = mipLevels,
+									.baseArrayLayer = 0,
+									.layerCount = 1,
+								},
+							};
+
+							const VkResult vrImageViewCreated = vkCreateImageView(device, &viewInfo, nullptr, &rustedIron2NormalImageView);
+							if (vrImageViewCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron Normal ImageView failed!", Error, VK, (L"Error Code: %1", vrImageViewCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron Normal ImageView success.", Info, VK, rustedIron2NormalImageView);
+							}
+						}
+
 						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalImage, mipExtents, totalSize, data.data());
 						if (!bSubmitSuccess)
 						{
@@ -2860,6 +2728,7 @@ int main()
 					}
 
 					// Metallic
+					if(true)
 					{
 						const char* path = "Resources/Textures/RustedIron2/rustediron2_metallic.png";
 
@@ -2895,7 +2764,7 @@ int main()
 								.pNext = nullptr,
 								.flags = 0u,
 								.imageType = VK_IMAGE_TYPE_2D,
-								.format = VK_FORMAT_R8_UINT,
+								.format = VK_FORMAT_R8_UNORM,
 								.extent{
 									.width = static_cast<uint32_t>(width),
 									.height = static_cast<uint32_t>(height),
@@ -2963,6 +2832,42 @@ int main()
 							}
 						}
 
+						// Image View
+						{
+							const VkImageViewCreateInfo viewInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.image = rustedIron2MetallicImage,
+								.viewType = VK_IMAGE_VIEW_TYPE_2D,
+								.format = VK_FORMAT_R8_UNORM,
+								.components{
+									.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.a = VK_COMPONENT_SWIZZLE_IDENTITY
+								},
+								.subresourceRange{
+									.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+									.baseMipLevel = 0,
+									.levelCount = mipLevels,
+									.baseArrayLayer = 0,
+									.layerCount = 1,
+								},
+							};
+
+							const VkResult vrImageViewCreated = vkCreateImageView(device, &viewInfo, nullptr, &rustedIron2MetallicImageView);
+							if (vrImageViewCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron Metallic ImageView failed!", Error, VK, (L"Error Code: %1", vrImageViewCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron Metallic ImageView success.", Info, VK, rustedIron2MetallicImageView);
+							}
+						}
+
 						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicImage, mipExtents, totalSize, data.data());
 						if (!bSubmitSuccess)
 						{
@@ -2974,6 +2879,7 @@ int main()
 					}
 
 					// Roughness
+					if (true)
 					{
 						const char* path = "Resources/Textures/RustedIron2/rustediron2_roughness.png";
 
@@ -3009,7 +2915,7 @@ int main()
 								.pNext = nullptr,
 								.flags = 0u,
 								.imageType = VK_IMAGE_TYPE_2D,
-								.format = VK_FORMAT_R8_UINT,
+								.format = VK_FORMAT_R8_UNORM,
 								.extent{
 									.width = static_cast<uint32_t>(width),
 									.height = static_cast<uint32_t>(height),
@@ -3077,6 +2983,42 @@ int main()
 							}
 						}
 
+						// Image View
+						{
+							const VkImageViewCreateInfo viewInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.image = rustedIron2RoughnessImage,
+								.viewType = VK_IMAGE_VIEW_TYPE_2D,
+								.format = VK_FORMAT_R8_UNORM,
+								.components{
+									.r = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.g = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.b = VK_COMPONENT_SWIZZLE_IDENTITY,
+									.a = VK_COMPONENT_SWIZZLE_IDENTITY
+								},
+								.subresourceRange{
+									.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+									.baseMipLevel = 0,
+									.levelCount = mipLevels,
+									.baseArrayLayer = 0,
+									.layerCount = 1,
+								},
+							};
+
+							const VkResult vrImageViewCreated = vkCreateImageView(device, &viewInfo, nullptr, &rustedIron2RoughnessImageView);
+							if (vrImageViewCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron Roughness ImageView failed!", Error, VK, (L"Error Code: %1", vrImageViewCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron Roughness ImageView success.", Info, VK, rustedIron2RoughnessImageView);
+							}
+						}
+
 						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessImage, mipExtents, totalSize, data.data());
 						if (!bSubmitSuccess)
 						{
@@ -3085,6 +3027,463 @@ int main()
 						}
 
 						stbi_image_free(inData);
+					}
+				}
+
+				// Samplers
+				if (true)
+				{
+					const VkSamplerCreateInfo samplerInfo{
+						.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.magFilter = VK_FILTER_LINEAR,
+						.minFilter = VK_FILTER_LINEAR,
+						.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR,
+						.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+						.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+						.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+						.mipLodBias = 0.0f,
+						.anisotropyEnable = VK_FALSE,
+						.maxAnisotropy = 1.0f,
+						.compareEnable = VK_FALSE,
+						.compareOp = VK_COMPARE_OP_ALWAYS,
+						.minLod = 0.0f,
+						.maxLod = 12.0f, // RustedIron PBR textures have 12 mips.
+						.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+						.unnormalizedCoordinates = VK_FALSE,
+					};
+
+					const VkResult vrSamplerCreater = vkCreateSampler(device, &samplerInfo, nullptr, &rustedIron2Sampler);
+					if (vrSamplerCreater != VK_SUCCESS)
+					{
+						SA_LOG(L"Create RustedIron2 Sampler failed!", Error, VK, (L"Error code: %1", rustedIron2Sampler));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create RustedIron2 Sampler success", Info, VK, rustedIron2Sampler);
+					}
+				}
+			}
+
+			// Scene Objects
+			if (true)
+			{
+				// Camera Buffers
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = sizeof(CameraUBO),
+						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &cameraBuffers[i]);
+						if (vrBufferCreated != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Camera Buffer [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Camera Buffer [%1] success", i), Info, VK, cameraBuffers[i]);
+						}
+
+
+						// Memory
+						VkMemoryRequirements memRequirements;
+						vkGetBufferMemoryRequirements(device, cameraBuffers[i], &memRequirements);
+
+						const VkMemoryAllocateInfo allocInfo{
+							.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+							.pNext = nullptr,
+							.allocationSize = memRequirements.size,
+							.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+						};
+
+						const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemories[i]);
+						if (vrBufferAlloc != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferAlloc));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Camera Buffer Memory [%1] success", i), Info, VK, cameraBufferMemories[i]);
+						}
+
+
+						const VkResult vrBindBufferMem = vkBindBufferMemory(device, cameraBuffers[i], cameraBufferMemories[i], 0);
+						if (vrBindBufferMem != VK_SUCCESS)
+						{
+							SA_LOG((L"Bind Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBindBufferMem));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Bind Camera Buffer Memory [%1] success", i), Info, VK);
+						}
+					}
+				}
+
+				// Sphere Object Buffer
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = sizeof(ObjectUBO),
+						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereObjectBuffer);
+					if (vrBufferCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Sphere Object Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Sphere Object Buffer success", Info, VK, sphereObjectBuffer);
+					}
+
+
+					// Memory
+					VkMemoryRequirements memRequirements;
+					vkGetBufferMemoryRequirements(device, sphereObjectBuffer, &memRequirements);
+
+					const VkMemoryAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.allocationSize = memRequirements.size,
+						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+					};
+
+					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereObjectBufferMemory);
+					if (vrBufferAlloc != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Object Buffer Memory success", Info, VK, sphereObjectBufferMemory);
+					}
+
+
+					const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereObjectBuffer, sphereObjectBufferMemory, 0);
+					if (vrBindBufferMem != VK_SUCCESS)
+					{
+						SA_LOG(L"Bind Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Bind Object Buffer Memory success", Info, VK);
+					}
+
+					// Submit
+					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, &transform);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+				// PointLights Buffer
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = pointLightNum * sizeof(PointLightUBO),
+						.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &pointLightBuffer);
+					if (vrBufferCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create PointLights Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create PointLights Buffer success", Info, VK, pointLightBuffer);
+					}
+
+
+					// Memory
+					VkMemoryRequirements memRequirements;
+					vkGetBufferMemoryRequirements(device, pointLightBuffer, &memRequirements);
+
+					const VkMemoryAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.allocationSize = memRequirements.size,
+						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+					};
+
+					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &pointLightBufferMemory);
+					if (vrBufferAlloc != VK_SUCCESS)
+					{
+						SA_LOG(L"Create PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create PointLights Buffer Memory success", Info, VK, pointLightBufferMemory);
+					}
+
+
+					const VkResult vrBindBufferMem = vkBindBufferMemory(device, pointLightBuffer, pointLightBufferMemory, 0);
+					if (vrBindBufferMem != VK_SUCCESS)
+					{
+						SA_LOG(L"Bind PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Bind PointLights Buffer Memory success", Info, VK);
+					}
+
+					// Submit
+					std::array<PointLightUBO, pointLightNum> pointlightsUBO{
+						PointLightUBO{
+							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
+							.intensity = 4.0f,
+							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
+							.radius = 3.0f
+						},
+						PointLightUBO{
+							.position = SA::Vec3f(1.75f, 2.0f, 1.0f),
+							.intensity = 7.0f,
+							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
+							.radius = 4.0f
+						}
+					};
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, pointlightsUBO.data());
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"PointLights Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+
+				// PBR Sphere Descriptor Sets
+				{
+					// Desc Pool
+					{
+						std::array<VkDescriptorPoolSize, 3> poolSize{
+							VkDescriptorPoolSize{
+								.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+								.descriptorCount = 2u,
+							},
+							VkDescriptorPoolSize{
+								.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+								.descriptorCount = 1u,
+							},
+							VkDescriptorPoolSize{
+								.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.descriptorCount = 4u,
+							},
+						};
+
+						const VkDescriptorPoolCreateInfo poolInfo{
+							.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.maxSets = bufferingCount,
+							.poolSizeCount = static_cast<uint32_t>(poolSize.size()),
+							.pPoolSizes = poolSize.data(),
+						};
+
+						const VkResult vrDescPooolCreated = vkCreateDescriptorPool(device, &poolInfo, nullptr, &pbrSphereDescPool);
+						if (vrDescPooolCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create PBR Sphere Descriptor Pool failed!", Error, VK, (L"Error code: %1", vrDescPooolCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create PBR Sphere Descriptor Pool success", Info, VK, pbrSphereDescPool);
+						}
+					}
+
+					// Alloc sets
+					std::array<VkDescriptorSetLayout, bufferingCount> layouts;
+					layouts.fill(litDescSetLayout);
+
+					const VkDescriptorSetAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.descriptorPool = pbrSphereDescPool,
+						.descriptorSetCount = bufferingCount,
+						.pSetLayouts = layouts.data(),
+					};
+
+					vkAllocateDescriptorSets(device, &allocInfo, pbrSphereDescSets.data());
+					
+					// Write sets
+					std::array<VkWriteDescriptorSet, 7> writes;
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						// Camera
+						const VkDescriptorBufferInfo cameraBufferInfo{
+							.buffer = cameraBuffers[i],
+							.offset = 0,
+							.range = sizeof(CameraUBO),
+						};
+						writes[0] =  VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 0,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+							.pImageInfo = nullptr,
+							.pBufferInfo = &cameraBufferInfo,
+							.pTexelBufferView = nullptr,
+						};
+
+						// Object
+						const VkDescriptorBufferInfo objectBufferInfo{
+							.buffer = sphereObjectBuffer,
+							.offset = 0,
+							.range = sizeof(ObjectUBO),
+						};
+						writes[1] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 1,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+							.pImageInfo = nullptr,
+							.pBufferInfo = &objectBufferInfo,
+							.pTexelBufferView = nullptr,
+						};
+
+						// PBR RustedIron Albedo
+						const VkDescriptorImageInfo albedoImageInfo{
+							.sampler = rustedIron2Sampler,
+							.imageView = rustedIron2AlbedoImageView,
+							.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						};
+						writes[2] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 2,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.pImageInfo = &albedoImageInfo,
+							.pBufferInfo = nullptr,
+							.pTexelBufferView = nullptr,
+						};
+
+						// PBR RustedIron Normal
+						const VkDescriptorImageInfo normalImageInfo{
+							.sampler = rustedIron2Sampler,
+							.imageView = rustedIron2NormalImageView,
+							.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						};
+						writes[3] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 3,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.pImageInfo = &normalImageInfo,
+							.pBufferInfo = nullptr,
+							.pTexelBufferView = nullptr,
+						};
+
+						// PBR RustedIron Metallic
+						const VkDescriptorImageInfo metallicImageInfo{
+							.sampler = rustedIron2Sampler,
+							.imageView = rustedIron2MetallicImageView,
+							.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						};
+						writes[4] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 4,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.pImageInfo = &metallicImageInfo,
+							.pBufferInfo = nullptr,
+							.pTexelBufferView = nullptr,
+						};
+
+						// PBR RustedIron Roughness
+						const VkDescriptorImageInfo roughnessImageInfo{
+							.sampler = rustedIron2Sampler,
+							.imageView = rustedIron2RoughnessImageView,
+							.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+						};
+						writes[5] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 5,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+							.pImageInfo = &roughnessImageInfo,
+							.pBufferInfo = nullptr,
+							.pTexelBufferView = nullptr,
+						};
+
+						// PointLights buffer
+						const VkDescriptorBufferInfo pointLightsBufferInfo{
+							.buffer = pointLightBuffer,
+							.offset = 0,
+							.range = pointLightNum * sizeof(PointLightUBO),
+						};
+						writes[6] = VkWriteDescriptorSet{
+							.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+							.pNext = nullptr,
+							.dstSet = pbrSphereDescSets[i],
+							.dstBinding = 6,
+							.dstArrayElement = 0,
+							.descriptorCount = 1,
+							.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+							.pImageInfo = nullptr,
+							.pBufferInfo = &pointLightsBufferInfo,
+							.pTexelBufferView = nullptr,
+						};
+
+
+						// Update
+						vkUpdateDescriptorSets(device,
+							static_cast<uint32_t>(writes.size()),
+							writes.data(),
+							0,
+							nullptr);
 					}
 				}
 			}
@@ -3108,22 +3507,35 @@ int main()
 		{
 			// Resources
 			{
+				// Samplers
+				{
+					vkDestroySampler(device, rustedIron2Sampler, nullptr);
+					SA_LOG(L"Destroy RustedIron2 Sampler success.", Info, VK, rustedIron2RoughnessImage);
+					rustedIron2Sampler = VK_NULL_HANDLE;
+				}
+
 				// Textures
 				{
 					// RustedIron2
 					{
 						// Roughness
 						vkDestroyImage(device, rustedIron2RoughnessImage, nullptr);
-						SA_LOG(L"Destroy RustedIron2 Rroughness Image success.", Info, VK, rustedIron2RoughnessImage);
+						SA_LOG(L"Destroy RustedIron2 Roughness Image success.", Info, VK, rustedIron2RoughnessImage);
 						rustedIron2RoughnessImage = VK_NULL_HANDLE;
+						vkDestroyImageView(device, rustedIron2RoughnessImageView, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Roughness Image View success.", Info, VK, rustedIron2RoughnessImageView);
+						rustedIron2RoughnessImageView = VK_NULL_HANDLE;
 						vkFreeMemory(device, rustedIron2RoughnessImageMemory, nullptr);
-						SA_LOG(L"Destroy RustedIron2 Rroughness Image Memory success.", Info, VK, rustedIron2RoughnessImageMemory);
+						SA_LOG(L"Destroy RustedIron2 Roughness Image Memory success.", Info, VK, rustedIron2RoughnessImageMemory);
 						rustedIron2RoughnessImageMemory = VK_NULL_HANDLE;
 
 						// Metallic
 						vkDestroyImage(device, rustedIron2MetallicImage, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Metallic Image success.", Info, VK, rustedIron2MetallicImage);
 						rustedIron2MetallicImage = VK_NULL_HANDLE;
+						vkDestroyImageView(device, rustedIron2MetallicImageView, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Metallic Image View success.", Info, VK, rustedIron2MetallicImageView);
+						rustedIron2MetallicImageView = VK_NULL_HANDLE;
 						vkFreeMemory(device, rustedIron2MetallicImageMemory, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Metallic Image Memory success.", Info, VK, rustedIron2MetallicImageMemory);
 						rustedIron2MetallicImageMemory = VK_NULL_HANDLE;
@@ -3132,6 +3544,9 @@ int main()
 						vkDestroyImage(device, rustedIron2NormalImage, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Normal Image success.", Info, VK, rustedIron2NormalImage);
 						rustedIron2NormalImage = VK_NULL_HANDLE;
+						vkDestroyImageView(device, rustedIron2NormalImageView, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Normal Image View success.", Info, VK, rustedIron2NormalImageView);
+						rustedIron2NormalImageView = VK_NULL_HANDLE;
 						vkFreeMemory(device, rustedIron2NormalImageMemory, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Normal Image Memory success.", Info, VK, rustedIron2NormalImageMemory);
 						rustedIron2NormalImageMemory = VK_NULL_HANDLE;
@@ -3140,6 +3555,9 @@ int main()
 						vkDestroyImage(device, rustedIron2AlbedoImage, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Albedo Image success.", Info, VK, rustedIron2AlbedoImage);
 						rustedIron2AlbedoImage = VK_NULL_HANDLE;
+						vkDestroyImageView(device, rustedIron2AlbedoImageView, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Albedo Image View success.", Info, VK, rustedIron2AlbedoImageView);
+						rustedIron2AlbedoImageView = VK_NULL_HANDLE;
 						vkFreeMemory(device, rustedIron2AlbedoImageMemory, nullptr);
 						SA_LOG(L"Destroy RustedIron2 Albedo Image Memory success.", Info, VK, rustedIron2AlbedoImageMemory);
 						rustedIron2AlbedoImageMemory = VK_NULL_HANDLE;
@@ -3221,6 +3639,21 @@ int main()
 					vkFreeMemory(device, cameraBufferMemories[i], nullptr);
 					SA_LOG((L"Destroy Camera Buffer Memory [%1] success.", i), Info, VK, cameraBufferMemories[i]);
 					cameraBufferMemories[i] = VK_NULL_HANDLE;
+				}
+
+				// Descriptor Sets
+				{
+					// PBR Sphere Descriptor Sets
+					{
+						// Automatically freed when destroying DescriptorPool
+						//vkFreeDescriptorSets(device, pbrSphereDescPool, bufferingCount, pbrSphereDescSets.data());
+						//SA_LOG(L"Destroy PBR Sphere Descriptor Sets success.", Info, VK);
+						//pbrSphereDescSets.fill(VK_NULL_HANDLE);
+
+						vkDestroyDescriptorPool(device, pbrSphereDescPool, nullptr);
+						SA_LOG(L"Destroy PBR Sphere Descriptor Sets Pool success.", Info, VK, pbrSphereDescPool);
+						pbrSphereDescPool = VK_NULL_HANDLE;
+					}
 				}
 			}
 
