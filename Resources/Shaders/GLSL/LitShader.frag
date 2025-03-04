@@ -7,9 +7,6 @@ layout(location = 0) in PixelInput
 	/// Vertex world position
 	vec3 worldPosition;
 
-	/// Shader view position
-	vec4 svPosition;
-
 	/// Camera view position.
 	vec3 viewPosition;
 

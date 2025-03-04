@@ -242,8 +242,8 @@ std::array<VkDescriptorSet, bufferingCount> pbrSphereDescSets{ VK_NULL_HANDLE };
 // = Camera Buffer =
 struct CameraUBO
 {
-	SA::Mat4f view;
-	SA::Mat4f invViewProj;
+	SA::CMat4f view;
+	SA::CMat4f invViewProj;
 };
 SA::TransformPRf cameraTr;
 constexpr float cameraMoveSpeed = 4.0f;
@@ -3201,7 +3201,7 @@ int main()
 					}
 
 					// Submit
-					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
+					const SA::CMat4f transform = SA::CMat4f::MakeTranslation(spherePosition);
 					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, &transform);
 					if (!bSubmitSuccess)
 					{
@@ -3284,7 +3284,7 @@ int main()
 							.radius = 4.0f
 						}
 					};
-					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, pointlightsUBO.data());
+					const bool bSubmitSuccess = SubmitBufferToGPU(pointLightBuffer, bufferInfo.size, pointlightsUBO.data());
 					if (!bSubmitSuccess)
 					{
 						SA_LOG(L"PointLights Buffer submit failed!", Error, DX12);
@@ -3598,7 +3598,7 @@ int main()
 					// Fill Data with updated values.
 					CameraUBO cameraUBO;
 					cameraUBO.view = cameraTr.Matrix();
-					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
+					const SA::CMat4f perspective = SA::CMat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
 					cameraUBO.invViewProj = perspective * cameraUBO.view.GetInversed();
 
 					// Memory mapping and Upload (CPU to GPU transfer).
@@ -3736,6 +3736,7 @@ int main()
 
 
 	// Uninitialization
+	if(true)
 	{
 		// Renderer
 		{

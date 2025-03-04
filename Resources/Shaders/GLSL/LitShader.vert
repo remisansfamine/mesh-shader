@@ -13,9 +13,6 @@ layout(location = 0) out VertexOutput
 	/// Vertex world position
 	vec3 worldPosition;
 
-	/// Shader view position
-	vec4 svPosition;
-
 	/// Camera view position.
 	vec3 viewPosition;
 
@@ -53,7 +50,7 @@ void main()
 	//---------- Position ----------
 	const vec4 worldPosition4 = object.transform * vec4(inPosition, 1.0);
 	vsOut.worldPosition = worldPosition4.xyz / worldPosition4.w;
-	vsOut.svPosition = camera.invViewProj * worldPosition4;
+	gl_Position = camera.invViewProj * worldPosition4;
 	vsOut.viewPosition = vec3(camera.view[0][3], camera.view[1][3], camera.view[2][3]);
 
 
