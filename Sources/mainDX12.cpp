@@ -299,6 +299,7 @@ struct PointLightUBO
 
 	float radius = 0.0f;
 };
+constexpr uint32_t pointLightNum = 2;
 MComPtr<ID3D12Resource> pointLightBuffer;
 
 
@@ -1524,7 +1525,7 @@ int main()
 					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, desc.Width, &transform, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 					if (!bSubmitSuccess)
 					{
-						SA_LOG(L"Create Sphere Object Buffer submit failed!", Error, DX12);
+						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
 						return EXIT_FAILURE;
 					}
 				}
@@ -1539,7 +1540,7 @@ int main()
 					const D3D12_RESOURCE_DESC desc{
 						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 						.Alignment = 0,
-						.Width = 2 * sizeof(PointLightUBO),
+						.Width = pointLightNum * sizeof(PointLightUBO),
 						.Height = 1,
 						.DepthOrArraySize = 1,
 						.MipLevels = 1,
@@ -1564,7 +1565,7 @@ int main()
 					}
 
 
-					std::array<PointLightUBO, 2> pointlightsUBO{
+					std::array<PointLightUBO, pointLightNum> pointlightsUBO{
 						PointLightUBO{
 							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
 							.intensity = 4.0f,

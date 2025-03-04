@@ -229,6 +229,45 @@ VkPipeline litPipeline = VK_NULL_HANDLE;
 
 // = DescriptorSets =
 
+// = Camera Buffer =
+struct CameraUBO
+{
+	SA::Mat4f view;
+	SA::Mat4f invViewProj;
+};
+SA::TransformPRf cameraTr;
+constexpr float cameraMoveSpeed = 4.0f;
+constexpr float cameraRotSpeed = 16.0f;
+constexpr float cameraNear = 0.1f;
+constexpr float cameraFar = 1000.0f;
+constexpr float cameraFOV = 90.0f;
+std::array<VkBuffer, bufferingCount> cameraBuffers;
+std::array<VkDeviceMemory, bufferingCount> cameraBufferMemories;
+
+// = Object Buffer =
+struct ObjectUBO
+{
+	SA::Mat4f transform;
+};
+constexpr SA::Vec3f spherePosition(0.5f, 0.0f, 2.0f);
+VkBuffer sphereObjectBuffer;
+VkDeviceMemory sphereObjectBufferMemory;
+
+// = PointLights Buffer =
+struct PointLightUBO
+{
+	SA::Vec3f position;
+
+	float intensity = 0.0f;
+
+	SA::Vec3f color;
+
+	float radius = 0.0f;
+};
+constexpr uint32_t pointLightNum = 2;
+VkBuffer pointLightBuffer;
+VkDeviceMemory pointLightBufferMemory;
+
 
 // === Resources ===
 
@@ -1341,7 +1380,7 @@ int main()
 					{
 						for (uint32_t i = 0; i < bufferingCount; ++i)
 						{
-							SA_LOG((L"Allocate Command buffer [%1] success.", i), Info, VK, (L"Error Code: %1", cmdBuffers[i]));
+							SA_LOG((L"Allocate Command buffer [%1] success.", i), Info, VK, cmdBuffers[i]);
 						}
 					}
 				}
@@ -1989,6 +2028,224 @@ int main()
 			};
 			vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
 
+
+			// Scene Objects
+			if (true)
+			{
+				// Camera Buffers
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = sizeof(CameraUBO),
+						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &cameraBuffers[i]);
+						if (vrBufferCreated != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Camera Buffer [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Camera Buffer [%1] success", i), Info, VK, cameraBuffers[i]);
+						}
+
+
+						// Memory
+						VkMemoryRequirements memRequirements;
+						vkGetBufferMemoryRequirements(device, cameraBuffers[i], &memRequirements);
+
+						const VkMemoryAllocateInfo allocInfo{
+							.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+							.pNext = nullptr,
+							.allocationSize = memRequirements.size,
+							.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+						};
+
+						const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &cameraBufferMemories[i]);
+						if (vrBufferAlloc != VK_SUCCESS)
+						{
+							SA_LOG((L"Create Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBufferAlloc));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Create Camera Buffer Memory [%1] success", i), Info, VK, cameraBufferMemories[i]);
+						}
+
+
+						const VkResult vrBindBufferMem = vkBindBufferMemory(device, cameraBuffers[i], cameraBufferMemories[i], 0);
+						if (vrBindBufferMem != VK_SUCCESS)
+						{
+							SA_LOG((L"Bind Camera Buffer Memory [%1] failed!", i), Error, VK, (L"Error code: %1", vrBindBufferMem));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG((L"Bind Camera Buffer Memory [%1] success", i), Info, VK);
+						}
+					}
+				}
+
+				// Sphere Object Buffer
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = sizeof(ObjectUBO),
+						.usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereObjectBuffer);
+					if (vrBufferCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Sphere Object Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Sphere Object Buffer success", Info, VK, sphereObjectBuffer);
+					}
+
+
+					// Memory
+					VkMemoryRequirements memRequirements;
+					vkGetBufferMemoryRequirements(device, sphereObjectBuffer, &memRequirements);
+
+					const VkMemoryAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.allocationSize = memRequirements.size,
+						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+					};
+
+					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereObjectBufferMemory);
+					if (vrBufferAlloc != VK_SUCCESS)
+					{
+						SA_LOG(L"Create Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create Object Buffer Memory success", Info, VK, sphereObjectBufferMemory);
+					}
+
+
+					const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereObjectBuffer, sphereObjectBufferMemory, 0);
+					if (vrBindBufferMem != VK_SUCCESS)
+					{
+						SA_LOG(L"Bind Object Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Bind Object Buffer Memory success", Info, VK);
+					}
+
+					// Submit
+					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, &transform);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+				// PointLights Buffer
+				{
+					const VkBufferCreateInfo bufferInfo{
+						.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+						.size = pointLightNum * sizeof(PointLightUBO),
+						.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+						.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+						.queueFamilyIndexCount = 0u,
+						.pQueueFamilyIndices = nullptr,
+					};
+
+					const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &pointLightBuffer);
+					if (vrBufferCreated != VK_SUCCESS)
+					{
+						SA_LOG(L"Create PointLights Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create PointLights Buffer success", Info, VK, pointLightBuffer);
+					}
+
+
+					// Memory
+					VkMemoryRequirements memRequirements;
+					vkGetBufferMemoryRequirements(device, pointLightBuffer, &memRequirements);
+
+					const VkMemoryAllocateInfo allocInfo{
+						.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+						.pNext = nullptr,
+						.allocationSize = memRequirements.size,
+						.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+					};
+
+					const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &pointLightBufferMemory);
+					if (vrBufferAlloc != VK_SUCCESS)
+					{
+						SA_LOG(L"Create PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Create PointLights Buffer Memory success", Info, VK, pointLightBufferMemory);
+					}
+
+
+					const VkResult vrBindBufferMem = vkBindBufferMemory(device, pointLightBuffer, pointLightBufferMemory, 0);
+					if (vrBindBufferMem != VK_SUCCESS)
+					{
+						SA_LOG(L"Bind PointLights Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						SA_LOG(L"Bind PointLights Buffer Memory success", Info, VK);
+					}
+
+					// Submit
+					std::array<PointLightUBO, pointLightNum> pointlightsUBO{
+						PointLightUBO{
+							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
+							.intensity = 4.0f,
+							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
+							.radius = 3.0f
+						},
+						PointLightUBO{
+							.position = SA::Vec3f(1.75f, 2.0f, 1.0f),
+							.intensity = 7.0f,
+							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
+							.radius = 4.0f
+						}
+					};
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, bufferInfo.size, pointlightsUBO.data());
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"PointLights Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+			}
 
 			// Resources
 			if (true)
@@ -2851,7 +3108,6 @@ int main()
 		{
 			// Resources
 			{
-
 				// Textures
 				{
 					// RustedIron2
@@ -2937,6 +3193,36 @@ int main()
 				}
 			}
 
+
+			// Scene Objects
+			{
+				// PointLights
+				vkDestroyBuffer(device, pointLightBuffer, nullptr);
+				SA_LOG(L"Destroy PointLights Buffer success.", Info, VK, pointLightBuffer);
+				pointLightBuffer = VK_NULL_HANDLE;
+				vkFreeMemory(device, pointLightBufferMemory, nullptr);
+				SA_LOG(L"Destroy PointLights Buffer Memory success.", Info, VK, pointLightBufferMemory);
+				pointLightBufferMemory = VK_NULL_HANDLE;
+
+				// Object
+				vkDestroyBuffer(device, sphereObjectBuffer, nullptr);
+				SA_LOG(L"Destroy Sphere Object Buffer success.", Info, VK, sphereObjectBuffer);
+				sphereObjectBuffer = VK_NULL_HANDLE;
+				vkFreeMemory(device, sphereObjectBufferMemory, nullptr);
+				SA_LOG(L"Destroy Sphere Object Buffer Memory success.", Info, VK, sphereObjectBufferMemory);
+				sphereObjectBufferMemory = VK_NULL_HANDLE;
+
+				// Camera
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					vkDestroyBuffer(device, cameraBuffers[i], nullptr);
+					SA_LOG((L"Destroy Camera Buffer [%1] success.", i), Info, VK, cameraBuffers[i]);
+					cameraBuffers[i] = VK_NULL_HANDLE;
+					vkFreeMemory(device, cameraBufferMemories[i], nullptr);
+					SA_LOG((L"Destroy Camera Buffer Memory [%1] success.", i), Info, VK, cameraBufferMemories[i]);
+					cameraBufferMemories[i] = VK_NULL_HANDLE;
+				}
+			}
 
 			// Pipeline
 			{
