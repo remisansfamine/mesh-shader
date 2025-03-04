@@ -206,13 +206,18 @@ std::array<uint32_t, bufferingCount> swapchainFenceValues{ 0u };
 
 
 // === Commands ===
-MComPtr<ID3D12CommandAllocator> cmdAlloc; // VkCommandPool -> ID3D12CommandAllocator
+/**
+* Vulkan needs only 1 CommandPool for all frames + 1 CommandBuffer per frame. Recording commands are allocated and stored in the CommandBuffer.
+* DirectX12 doesn't have CommandPool, and split the CommandBuffer into "Allocator" (1 per frame) and CommandList (current list of allocated command for the frame, that can be directly reused: 1 for all frame).
+* For more details, check DirectX-Graphics-Sample: HelloFrameBuffering.cpp.
+*/
+std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 
 /**
 * /!\ with DirectX12, for graphics operations, the 'CommandList' type is not enough. ID3D12GraphicsCommandList must be used.
 * Like for Vulkan, we allocate 1 command buffer per frame.
 */
-std::array<MComPtr<ID3D12GraphicsCommandList1>, bufferingCount> cmdLists{ nullptr }; // VkCommandBuffer -> ID3D12CommandList
+MComPtr<ID3D12GraphicsCommandList1> cmdList;
 
 
 // === Scene Textures ===
@@ -353,7 +358,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 
 
 	// Copy GPU temp staging buffer to final GPU-only buffer.
-	cmdLists[0]->CopyBufferRegion(_gpuBuffer.Get(), 0, stagingBuffer.Get(), 0, _size);
+	cmdList->CopyBufferRegion(_gpuBuffer.Get(), 0, stagingBuffer.Get(), 0, _size);
 
 
 	// Resource transition to final state.
@@ -368,22 +373,22 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 		},
 	};
 
-	cmdLists[0]->ResourceBarrier(1, &barrier);
+	cmdList->ResourceBarrier(1, &barrier);
 
-	cmdLists[0]->Close();
+	cmdList->Close();
 
 	/**
 	* Instant command submit execution (easy implementation)
 	* Better code would parallelize resources loading in staging buffer and submit only once at the end to execute all GPU copies.
 	*/
 
-	ID3D12CommandList* cmdListsArr[] = { cmdLists[0].Get() };
+	ID3D12CommandList* cmdListsArr[] = { cmdList.Get() };
 	graphicsQueue->ExecuteCommandLists(1, cmdListsArr);
 
 	WaitDeviceIdle();
 
-	cmdAlloc->Reset();
-	cmdLists[0]->Reset(cmdAlloc.Get(), nullptr);
+	cmdAllocs[0]->Reset();
+	cmdList->Reset(cmdAllocs[0].Get(), nullptr);
 
 	return true;
 }
@@ -454,7 +459,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<S
 			.SubresourceIndex = i // currMipLevel
 		};
 
-		cmdLists[0]->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
+		cmdList->CopyTextureRegion(&dst, 0u, 0u, 0u, &src, nullptr);
 
 		offset += _extents[i].x * _extents[i].y * _channelNum;
 	}
@@ -472,27 +477,27 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<S
 		},
 	};
 
-	cmdLists[0]->ResourceBarrier(1, &barrier);
+	cmdList->ResourceBarrier(1, &barrier);
 
-	cmdLists[0]->Close();
+	cmdList->Close();
 
 	/**
 	* Instant command submit execution (easy implementation)
 	* Better code would parallelize resources loading in staging buffer and submit only once at the end to execute all GPU copies.
 	*/
 
-	ID3D12CommandList* cmdListsArr[] = { cmdLists[0].Get() };
+	ID3D12CommandList* cmdListsArr[] = { cmdList.Get() };
 	graphicsQueue->ExecuteCommandLists(1, cmdListsArr);
 
 	WaitDeviceIdle();
 
-	cmdAlloc->Reset();
-	cmdLists[0]->Reset(cmdAlloc.Get(), nullptr);
+	cmdAllocs[0]->Reset();
+	cmdList->Reset(cmdAllocs[0].Get(), nullptr);
 
 	return true;
 }
 
-void GenerateMipMaps(SA::Vec2ui _extent, std::vector<char>& _data, uint32_t& _outMipLevels, uint32_t& _outTotalSize, std::vector<SA::Vec2ui>& _outExtents, uint32_t _channelNum, uint32_t _layerNum = 1u)
+void GenerateMipMapsCPU(SA::Vec2ui _extent, std::vector<char>& _data, uint32_t& _outMipLevels, uint32_t& _outTotalSize, std::vector<SA::Vec2ui>& _outExtents, uint32_t _channelNum, uint32_t _layerNum = 1u)
 {
 	_outMipLevels = static_cast<uint32_t>(std::floor(std::log2(max(_extent.x, _extent.y)))) + 1;
 
@@ -844,43 +849,45 @@ int main()
 			// Commands
 			if (true)
 			{
-				// Allocator
+				// Allocators
+				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
+					auto& cmdAlloc = cmdAllocs[i];
+
 					const HRESULT hrCmdAllocCreated = device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc));
 					if (FAILED(hrCmdAllocCreated))
 					{
-						SA_LOG(L"Create Command Allocator failed!", Error, DX12, (L"Error Code: %1", hrCmdAllocCreated));
+						SA_LOG((L"Create Command Allocator [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrCmdAllocCreated));
 						return EXIT_FAILURE;
 					}
 					else
 					{
-						LPCWSTR name = L"CommandAlloc";
-						cmdAlloc->SetName(name);
+						const std::wstring name = L"CommandAlloc [" + std::to_wstring(i) + L"]";
+						cmdAlloc->SetName(name.c_str());
 
-						SA_LOG(L"Create Command Allocator success.", Info, DX12, (L"\"%1\" [%2]", name, cmdAlloc.Get()));
+						SA_LOG((L"Create Command Allocator [%1] success", i), Info, DX12, (L"\"%1\" [%2]", name, cmdAlloc.Get()));
 					}
 				}
 
-				// Lists
-				for (uint32_t i = 0; i < bufferingCount; ++i)
+				// List
 				{
-					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc.Get(), nullptr, IID_PPV_ARGS(&cmdLists[i]));
+					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAllocs[0].Get(), nullptr, IID_PPV_ARGS(&cmdList));
 					if (FAILED(hrCmdListCreated))
 					{
-						SA_LOG((L"Create Command List [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrCmdListCreated));
+						SA_LOG("Create Command List failed!", Error, DX12, (L"Error Code: %1", hrCmdListCreated));
 						return EXIT_FAILURE;
 					}
 					else
 					{
-						const std::wstring name = L"CommandList [" + std::to_wstring(i) + L"]";
-						cmdLists[i]->SetName(name.data());
+						const LPCWSTR name = L"CommandList";
+						cmdList->SetName(name);
 
-						SA_LOG((L"Create Command List [%1] success.", i), Info, DX12, (L"\"%1\" [%2]", name, cmdLists[i].Get()));
+						SA_LOG(L"Create Command List success.", Info, DX12, (L"\"%1\" [%2]", name, cmdList.Get()));
 					}
-
-					// Command list must be closed because we will start the frame by Reset()
-					cmdLists[i]->Close();
 				}
+
+				// Command list must be closed because we will start the frame by Reset()
+				cmdList->Close();
 			}
 
 
@@ -1407,7 +1414,7 @@ int main()
 			}
 
 
-			cmdLists[0]->Reset(cmdAlloc.Get(), nullptr);
+			cmdList->Reset(cmdAllocs[0].Get(), nullptr);
 
 
 			// Scene Objects
@@ -1906,7 +1913,7 @@ int main()
 							uint32_t mipLevels = 0u;
 							uint32_t totalSize = 0u;
 							std::vector<SA::Vec2ui> mipExtents;
-							GenerateMipMaps(
+							GenerateMipMapsCPU(
 								SA::Vec2ui{
 									static_cast<uint32_t>(width),
 									static_cast<uint32_t>(height)
@@ -1985,7 +1992,7 @@ int main()
 							uint32_t mipLevels = 0u;
 							uint32_t totalSize = 0u;
 							std::vector<SA::Vec2ui> mipExtents;
-							GenerateMipMaps(
+							GenerateMipMapsCPU(
 								SA::Vec2ui{
 									static_cast<uint32_t>(width),
 									static_cast<uint32_t>(height)
@@ -2063,7 +2070,7 @@ int main()
 							uint32_t mipLevels = 0u;
 							uint32_t totalSize = 0u;
 							std::vector<SA::Vec2ui> mipExtents;
-							GenerateMipMaps(
+							GenerateMipMapsCPU(
 								SA::Vec2ui{
 									static_cast<uint32_t>(width),
 									static_cast<uint32_t>(height)
@@ -2141,7 +2148,7 @@ int main()
 							uint32_t mipLevels = 0u;
 							uint32_t totalSize = 0u;
 							std::vector<SA::Vec2ui> mipExtents;
-							GenerateMipMaps(
+							GenerateMipMapsCPU(
 								SA::Vec2ui{
 									static_cast<uint32_t>(width),
 									static_cast<uint32_t>(height)
@@ -2206,7 +2213,7 @@ int main()
 			}
 
 
-			cmdLists[0]->Close();
+			cmdList->Close();
 		}
 	}
 
@@ -2333,7 +2340,8 @@ int main()
 
 				// Register Commands
 				{
-					auto cmd = cmdLists[swapchainFrameIndex];
+					auto cmdAlloc = cmdAllocs[swapchainFrameIndex];
+					auto cmd = cmdList;
 
 					cmdAlloc->Reset();
 					cmd->Reset(cmdAlloc.Get(), nullptr);
@@ -2482,6 +2490,9 @@ int main()
 	{
 		// Renderer
 		{
+			WaitDeviceIdle();
+
+
 			// Resources
 			{
 				// Meshes
@@ -2607,14 +2618,14 @@ int main()
 
 			// Commands
 			{
+				SA_LOG(L"Destroying Command List...", Info, DX12, cmdList.Get());
+				cmdList = nullptr;
+
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
-					SA_LOG((L"Destroying Command List [%1]...", i), Info, DX12, cmdLists[i].Get());
-					cmdLists[i] = nullptr;
+					SA_LOG((L"Destroying Command Allocator [%1]...", i), Info, DX12, cmdAllocs[i].Get());
+					cmdAllocs[i] = nullptr;
 				}
-
-				SA_LOG(L"Destroying Command Allocator...", Info, DX12, cmdAlloc.Get());
-				cmdAlloc = nullptr;
 			}
 
 
