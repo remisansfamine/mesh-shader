@@ -256,6 +256,46 @@ MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSigna
 MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineState
 
 
+// === Scene Objects ===
+
+MComPtr<ID3D12DescriptorHeap> pbrSphereSRVHeap;
+
+// = Camera Buffer =
+struct CameraUBO
+{
+	SA::Mat4f view;
+	SA::Mat4f invViewProj;
+};
+SA::TransformPRf cameraTr;
+constexpr float cameraMoveSpeed = 4.0f;
+constexpr float cameraRotSpeed = 16.0f;
+constexpr float cameraNear = 0.1f;
+constexpr float cameraFar = 1000.0f;
+constexpr float cameraFOV = 90.0f;
+std::array<MComPtr<ID3D12Resource>, bufferingCount> cameraBuffers;
+
+// = Object Buffer =
+struct ObjectUBO
+{
+	SA::Mat4f transform;
+};
+constexpr SA::Vec3f spherePosition(0.5f, 0.0f, 2.0f);
+MComPtr<ID3D12Resource> sphereObjectBuffer;
+
+// = PointLights Buffer =
+struct PointLightUBO
+{
+	SA::Vec3f position;
+
+	float intensity = 0.0f;
+
+	SA::Vec3f color;
+
+	float radius = 0.0f;
+};
+MComPtr<ID3D12Resource> pointLightBuffer;
+
+
 // === Resources ===
 
 #include <assimp/Importer.hpp>
@@ -531,7 +571,6 @@ MComPtr<ID3D12Resource> rustedIron2AlbedoTexture; // VkImage + VkDeviceMemory ->
 MComPtr<ID3D12Resource> rustedIron2NormalTexture;
 MComPtr<ID3D12Resource> rustedIron2MetallicTexture;
 MComPtr<ID3D12Resource> rustedIron2RoughnessTexture;
-MComPtr<ID3D12DescriptorHeap> rustedIron2SRVHeap;
 
 
 
@@ -566,6 +605,7 @@ int main()
 		// Renderer
 		{
 			// Factory
+			if (true)
 			{
 				UINT dxgiFactoryFlags = 0;
 
@@ -604,6 +644,7 @@ int main()
 
 
 			// Device
+			if (true)
 			{
 				// Don't need to keep reference after creating logical device.
 				MComPtr<IDXGIAdapter3> adapter; // VkPhysicalDevice -> IDXGIAdapter.
@@ -719,6 +760,7 @@ int main()
 
 
 			// Swapchain
+			if (true)
 			{
 				const DXGI_SWAP_CHAIN_DESC1 desc{
 					.Width = windowSize.x,
@@ -799,6 +841,7 @@ int main()
 
 
 			// Commands
+			if (true)
 			{
 				// Allocator
 				{
@@ -841,6 +884,7 @@ int main()
 
 
 			// Scene Textures
+			if (true)
 			{
 				// Color RT View Heap
 				{
@@ -957,6 +1001,7 @@ int main()
 
 
 			// Pipeline
+			if (true)
 			{
 				// Viewport & Scissor
 				{
@@ -1361,10 +1406,198 @@ int main()
 			}
 
 
-			// Resources
-			{
-				cmdLists[0]->Reset(cmdAlloc.Get(), nullptr);
+			cmdLists[0]->Reset(cmdAlloc.Get(), nullptr);
 
+
+			// Scene Objects
+			if (true)
+			{
+				// PBR Sphere SRV View Heap
+				{
+					/**
+					* Allocate Heap to emplace image/buffer views for future bindings.
+					*/
+
+					D3D12_DESCRIPTOR_HEAP_DESC desc{
+						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+						.NumDescriptors = 5,
+						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
+					};
+
+					const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&pbrSphereSRVHeap));
+					if (FAILED(hrCreateHeap))
+					{
+						SA_LOG(L"Create PBR Sphere SRV ViewHeap failed.", Error, DX12, (L"Error code: %1", hrCreateHeap));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"PBR Sphere SRV ViewHeap";
+						pbrSphereSRVHeap->SetName(name);
+
+						SA_LOG(L"Create PBR Sphere SRV ViewHeap success.", Info, DX12, (L"\"%1\" [%2]", name, pbrSphereSRVHeap.Get()));
+					}
+				}
+
+
+				// Camera Buffers
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_UPLOAD, // Keep upload since we will update it each frame.
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = sizeof(CameraUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cameraBuffers[i]));
+						if (FAILED(hrBufferCreated))
+						{
+							SA_LOG((L"Create Camera Buffer [%1] failed!", i), Error, DX12, (L"Error code: %1", hrBufferCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							const std::wstring name = L"CameraBuffer [" + std::to_wstring(i) + L"]";
+							cameraBuffers[i]->SetName(name.c_str());
+
+							SA_LOG((L"Create Camera Buffer [%1] success", i), Info, DX12, (L"\"%1\" [%2]", name, cameraBuffers[i].Get()));
+						}
+					}
+				}
+
+
+				// Sphere Object Buffer
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = sizeof(ObjectUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereObjectBuffer));
+					if (FAILED(hrBufferCreated))
+					{
+						SA_LOG(L"Create Sphere Object Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"SphereObjectBuffer";
+						sphereObjectBuffer->SetName(name);
+
+						SA_LOG(L"Create Sphere Object Buffer failed!", Info, DX12, (L"\"%1\" [%2]", name, sphereObjectBuffer.Get()));
+					}
+
+					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, desc.Width, &transform, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Create Sphere Object Buffer submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+				}
+
+
+				// PointLights Buffer
+				{
+					const D3D12_HEAP_PROPERTIES heap{
+						.Type = D3D12_HEAP_TYPE_DEFAULT,
+					};
+
+					const D3D12_RESOURCE_DESC desc{
+						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+						.Alignment = 0,
+						.Width = 2 * sizeof(PointLightUBO),
+						.Height = 1,
+						.DepthOrArraySize = 1,
+						.MipLevels = 1,
+						.Format = DXGI_FORMAT_UNKNOWN,
+						.SampleDesc = {.Count = 1, .Quality = 0 },
+						.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+						.Flags = D3D12_RESOURCE_FLAG_NONE,
+					};
+
+					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&pointLightBuffer));
+					if (FAILED(hrBufferCreated))
+					{
+						SA_LOG(L"Create PointLights Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const LPCWSTR name = L"PointLightsBuffer";
+						pointLightBuffer->SetName(name);
+
+						SA_LOG(L"Create PointLights Buffer success", Info, DX12, (L"\"%1\" [%2]", name, pointLightBuffer.Get()));
+					}
+
+
+					std::array<PointLightUBO, 2> pointlightsUBO{
+						PointLightUBO{
+							.position = SA::Vec3f(-0.25f, -1.0f, 0.0f),
+							.intensity = 4.0f,
+							.color = SA::Vec3f(1.0f, 1.0f, 0.0f),
+							.radius = 3.0f
+						},
+						PointLightUBO{
+							.position = SA::Vec3f(1.75f, 2.0f, 1.0f),
+							.intensity = 7.0f,
+							.color = SA::Vec3f(0.0f, 1.0f, 1.0f),
+							.radius = 4.0f
+						}
+					};
+
+					const bool bSubmitSuccess = SubmitBufferToGPU(pointLightBuffer, desc.Width, pointlightsUBO.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+					if (!bSubmitSuccess)
+					{
+						SA_LOG(L"Sphere PointLight submit failed!", Error, DX12);
+						return EXIT_FAILURE;
+					}
+
+					// Create View
+					{
+						D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+							.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+							.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+							.Buffer{
+								.FirstElement = 0,
+								.NumElements = static_cast<UINT>(pointlightsUBO.size()),
+								.StructureByteStride = sizeof(PointLightUBO),
+							},
+						};
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSphereSRVHeap->GetCPUDescriptorHandleForHeapStart();
+						device->CreateShaderResourceView(pointLightBuffer.Get(), &viewDesc, cpuHandle);
+					}
+				}
+			}
+
+
+			// Resources
+			if (true)
+			{
 				Assimp::Importer importer;
 
 				// Meshes
@@ -1651,35 +1884,8 @@ int main()
 
 					// RustedIron2 PBR
 					{
-						// SRV View Heap
-						{
-							/**
-							* Allocate Heap to emplace image views for future texture binding.
-							*/
-
-							D3D12_DESCRIPTOR_HEAP_DESC desc{
-								.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-								.NumDescriptors = 5,
-								.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
-							};
-
-							const HRESULT hrCreateHeap = device->CreateDescriptorHeap(&desc, IID_PPV_ARGS(&rustedIron2SRVHeap));
-							if (FAILED(hrCreateHeap))
-							{
-								SA_LOG(L"Create RustedIron2 SRV ViewHeap failed.", Error, DX12, (L"Error code: %1", hrCreateHeap));
-								return EXIT_FAILURE;
-							}
-							else
-							{
-								const LPCWSTR name = L"RustedIron2 PBR ViewHeap";
-								rustedIron2SRVHeap->SetName(name);
-
-								SA_LOG(L"Create RustedIron2 SRV ViewHeap success.", Info, DX12, (L"\"%1\" [%2]", name, rustedIron2SRVHeap.Get()));
-							}
-						}
-
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = rustedIron2SRVHeap->GetCPUDescriptorHandleForHeapStart();
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSphereSRVHeap->GetCPUDescriptorHandleForHeapStart();
 						cpuHandle.ptr += srvOffset; // Add offset because first slot it for PointLightsBuffer.
 
 						// Albedo
@@ -1997,6 +2203,9 @@ int main()
 					}
 				}
 			}
+
+
+			cmdLists[0]->Close();
 		}
 	}
 
@@ -2054,10 +2263,38 @@ int main()
 
 						SA_LOG(L"Destroying RustedIron2 Roughness Texture...", Info, DX12, rustedIron2RoughnessTexture.Get());
 						rustedIron2RoughnessTexture = nullptr;
-
-						SA_LOG(L"Destroying RustedIron2 SRV ViewHeap...", Info, DX12, rustedIron2SRVHeap.Get());
-						rustedIron2SRVHeap = nullptr;
 					}
+				}
+			}
+
+
+			// Scene Objects
+			{
+				// Camera Buffer
+				{
+					for (uint32_t i = 0; i < bufferingCount; ++i)
+					{
+						SA_LOG((L"Destroying Camera Buffer [%1]...", i), Info, DX12, cameraBuffers[i].Get());
+						cameraBuffers[i] = nullptr;
+					}
+				}
+
+				// Sphere Object Buffer
+				{
+					SA_LOG(L"Destroying Sphere Object Buffer...", Info, DX12, sphereObjectBuffer.Get());
+					sphereObjectBuffer = nullptr;
+				}
+
+				// PointLights Buffer
+				{
+					SA_LOG(L"Destroying PointLights Buffer...", Info, DX12, pointLightBuffer.Get());
+					pointLightBuffer = nullptr;
+				}
+
+				// PBR Sphere ViewHeap
+				{
+					SA_LOG(L"Destroying PBR Sphere SRV ViewHeap...", Info, DX12, pbrSphereSRVHeap.Get());
+					pbrSphereSRVHeap = nullptr;
 				}
 			}
 
