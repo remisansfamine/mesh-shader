@@ -175,7 +175,7 @@ std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
 // === Scene Textures ===
 
 // = Color =
-VkFormat sceneColorFormat = VK_FORMAT_R8G8B8_SRGB;
+VkFormat sceneColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
 const VkClearValue sceneClearColor{
 	.color = { 0.0f, 0.1f, 0.2f, 1.0f },
 };
@@ -246,8 +246,8 @@ struct CameraUBO
 	SA::CMat4f invViewProj;
 };
 SA::TransformPRf cameraTr;
-constexpr float cameraMoveSpeed = 4.0f;
-constexpr float cameraRotSpeed = 16.0f;
+constexpr float cameraMoveSpeed = 1.0f;
+constexpr float cameraRotSpeed = 12.0f;
 constexpr float cameraNear = 0.1f;
 constexpr float cameraFar = 1000.0f;
 constexpr float cameraFOV = 90.0f;
@@ -1169,7 +1169,7 @@ int main()
 					// Find prefered
 					for (uint32_t i = 0; i < formats.size(); ++i)
 					{
-						if (formats[i].format == VK_FORMAT_B8G8R8A8_SRGB && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+						if (formats[i].format == VK_FORMAT_R8G8B8A8_UNORM && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
 						{
 							swapchainFormat = formats[i];
 							break;
@@ -1214,7 +1214,7 @@ int main()
 					.flags = 0u,
 					.surface = windowSurface,
 					.minImageCount = bufferingCount,
-					.imageFormat = swapchainFormat.format,
+					.imageFormat = sceneColorFormat,
 					.imageColorSpace = swapchainFormat.colorSpace,
 					.imageExtent = VkExtent2D{ windowSize.x, windowSize.y },
 					.imageArrayLayers = 1u,
@@ -1648,9 +1648,9 @@ int main()
 				{
 					viewport = VkViewport{
 						.x = 0,
-						.y = 0,
-						.width = static_cast<float>(windowSize.x),
-						.height = static_cast<float>(windowSize.y),
+						.y = static_cast<float>(windowSize.y),			//
+						.width = static_cast<float>(windowSize.x),		// Flipping the Y-axis on viewport to match DX12
+						.height = -static_cast<float>(windowSize.y),	//
 						.minDepth = 0.0f,
 						.maxDepth = 1.0f,
 					};
@@ -2334,8 +2334,17 @@ int main()
 							}
 
 
+							// Pack
+							std::vector<SA::Vec2f> uvs;
+							uvs.reserve(inMesh->mNumVertices);
+
+							for (uint32_t i = 0; i < inMesh->mNumVertices; ++i)
+							{
+								uvs.push_back(SA::Vec2f{ inMesh->mTextureCoords[0][i].x, inMesh->mTextureCoords[0][i].y });
+							}
+
 							// Submit
-							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[3], bufferInfo.size, inMesh->mVertices);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[3], bufferInfo.size, uvs.data());
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"Sphere Vertex UV Buffer submit failed!", Error, VK);
