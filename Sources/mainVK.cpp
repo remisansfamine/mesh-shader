@@ -246,8 +246,8 @@ struct CameraUBO
 	SA::CMat4f invViewProj;
 };
 SA::TransformPRf cameraTr;
-constexpr float cameraMoveSpeed = 1.0f;
-constexpr float cameraRotSpeed = 12.0f;
+constexpr float cameraMoveSpeed = 0.5f;
+constexpr float cameraRotSpeed = 10.0f;
 constexpr float cameraNear = 0.1f;
 constexpr float cameraFar = 1000.0f;
 constexpr float cameraFOV = 90.0f;
