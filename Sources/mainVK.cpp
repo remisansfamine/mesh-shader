@@ -398,7 +398,7 @@ bool SubmitBufferToGPU(VkBuffer _gpuBuffer, uint64_t _size, const void* _data)
 	return true;
 }
 
-bool SubmitTextureToGPU(VkImage _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, const void* _data)
+bool SubmitTextureToGPU(VkImage _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, uint32_t _channelNum, const void* _data)
 {
 	VkBuffer stagingBuffer = VK_NULL_HANDLE;
 	VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
@@ -508,6 +508,8 @@ bool SubmitTextureToGPU(VkImage _gpuTexture, const std::vector<SA::Vec2ui>& _ext
 			.imageOffset = {0, 0, 0},
 			.imageExtent = {_extents[i].x, _extents[i].y, 1u },
 		};
+
+		offset += _extents[i].x * _extents[i].y * _channelNum;
 	}
 
 	vkCmdCopyBufferToImage(cmdBuffers[0],
@@ -2582,7 +2584,7 @@ int main()
 							}
 						}
 
-						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoImage, mipExtents, totalSize, data.data());
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoImage, mipExtents, totalSize, channels, data.data());
 						if (!bSubmitSuccess)
 						{
 							SA_LOG(L"RustedIron2 Albedo Texture submit failed!", Error, VK);
@@ -2734,7 +2736,7 @@ int main()
 							}
 						}
 
-						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalImage, mipExtents, totalSize, data.data());
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalImage, mipExtents, totalSize, channels, data.data());
 						if (!bSubmitSuccess)
 						{
 							SA_LOG(L"RustedIron2 Normal Texture submit failed!", Error, VK);
@@ -2885,7 +2887,7 @@ int main()
 							}
 						}
 
-						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicImage, mipExtents, totalSize, data.data());
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicImage, mipExtents, totalSize, channels, data.data());
 						if (!bSubmitSuccess)
 						{
 							SA_LOG(L"RustedIron2 Metallic Texture submit failed!", Error, VK);
@@ -3036,7 +3038,7 @@ int main()
 							}
 						}
 
-						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessImage, mipExtents, totalSize, data.data());
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessImage, mipExtents, totalSize, channels, data.data());
 						if (!bSubmitSuccess)
 						{
 							SA_LOG(L"RustedIron2 Roughness Texture submit failed!", Error, VK);
