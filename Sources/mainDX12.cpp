@@ -394,7 +394,7 @@ bool SubmitBufferToGPU(MComPtr<ID3D12Resource> _gpuBuffer, uint64_t _size, const
 	return true;
 }
 
-bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, uint32_t _channelNum, const void* _data, D3D12_RESOURCE_STATES _stateAfter)
+bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, uint32_t _channelNum, const void* _data)
 {
 	// Create temp upload buffer.
 	MComPtr<ID3D12Resource> stagingBuffer;
@@ -474,7 +474,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<S
 			.pResource = _gpuTexture.Get(),
 			.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
 			.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST,
-			.StateAfter = _stateAfter,
+			.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
 		},
 	};
 
@@ -1949,8 +1949,15 @@ int main()
 								SA_LOG(L"Create RustedIron2 Albedo Texture failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
 								return EXIT_FAILURE;
 							}
+							else
+							{
+								const LPCWSTR name = L"RustedIron2 Albedo";
+								rustedIron2AlbedoTexture->SetName(name);
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+								SA_LOG(L"Create RustedIron2 Albedo Texture success.", Info, DX12, (L"\"%1\" [%2]", name, rustedIron2AlbedoTexture.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoTexture, mipExtents, totalSize, channels, data.data());
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Albedo Texture submit failed!", Error, DX12);
@@ -2028,8 +2035,15 @@ int main()
 								SA_LOG(L"Create RustedIron2 Normal Texture failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
 								return EXIT_FAILURE;
 							}
+							else
+							{
+								const LPCWSTR name = L"RustedIron2 Normal";
+								rustedIron2NormalTexture->SetName(name);
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+								SA_LOG(L"Create RustedIron2 Normal Texture success.", Info, DX12, (L"\"%1\" [%2]", name, rustedIron2NormalTexture.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalTexture, mipExtents, totalSize, channels, data.data());
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Normal Texture submit failed!", Error, DX12);
@@ -2106,8 +2120,15 @@ int main()
 								SA_LOG(L"Create RustedIron2 Metallic Texture failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
 								return EXIT_FAILURE;
 							}
+							else
+							{
+								const LPCWSTR name = L"RustedIron2 Metallic";
+								rustedIron2MetallicTexture->SetName(name);
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+								SA_LOG(L"Create RustedIron2 Metallic Texture success.", Info, DX12, (L"\"%1\" [%2]", name, rustedIron2MetallicTexture.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicTexture, mipExtents, totalSize, channels, data.data());
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Metallic Texture submit failed!", Error, DX12);
@@ -2184,8 +2205,15 @@ int main()
 								SA_LOG(L"Create RustedIron2 Roughness Texture failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
 								return EXIT_FAILURE;
 							}
+							else
+							{
+								const LPCWSTR name = L"RustedIron2 Roughness";
+								rustedIron2RoughnessTexture->SetName(name);
 
-							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessTexture, mipExtents, totalSize, channels, data.data(), D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+								SA_LOG(L"Create RustedIron2 Roughness Texture success.", Info, DX12, (L"\"%1\" [%2]", name, rustedIron2RoughnessTexture.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessTexture, mipExtents, totalSize, channels, data.data());
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"RustedIron2 Roughness Texture submit failed!", Error, DX12);
@@ -2497,6 +2525,25 @@ int main()
 
 			// Resources
 			{
+				// Textures
+				{
+					// RustedIron 2
+					{
+						SA_LOG(L"Destroying RustedIron2 Roughness Texture...", Info, DX12, rustedIron2RoughnessTexture.Get());
+						rustedIron2RoughnessTexture = nullptr;
+
+						SA_LOG(L"Destroying RustedIron2 Metallic Texture...", Info, DX12, rustedIron2MetallicTexture.Get());
+						rustedIron2MetallicTexture = nullptr;
+
+
+						SA_LOG(L"Destroying RustedIron2 Normal Texture...", Info, DX12, rustedIron2NormalTexture.Get());
+						rustedIron2NormalTexture = nullptr;
+
+						SA_LOG(L"Destroying RustedIron2 Albedo Texture...", Info, DX12, rustedIron2AlbedoTexture.Get());
+						rustedIron2AlbedoTexture = nullptr;
+					}
+				}
+
 				// Meshes
 				{
 					// Sphere
@@ -2520,24 +2567,6 @@ int main()
 						SA_LOG(L"Destroying Sphere UV Position Buffer...", Info, DX12, sphereVertexBuffers[3].Get());
 						sphereVertexBuffers[3] = nullptr;
 						sphereVertexBufferViews[3] = D3D12_VERTEX_BUFFER_VIEW{};
-					}
-				}
-
-				// Textures
-				{
-					// RustedIron 2
-					{
-						SA_LOG(L"Destroying RustedIron2 Albedo Texture...", Info, DX12, rustedIron2AlbedoTexture.Get());
-						rustedIron2AlbedoTexture = nullptr;
-
-						SA_LOG(L"Destroying RustedIron2 Normal Texture...", Info, DX12, rustedIron2NormalTexture.Get());
-						rustedIron2NormalTexture = nullptr;
-
-						SA_LOG(L"Destroying RustedIron2 Metallic Texture...", Info, DX12, rustedIron2MetallicTexture.Get());
-						rustedIron2MetallicTexture = nullptr;
-
-						SA_LOG(L"Destroying RustedIron2 Roughness Texture...", Info, DX12, rustedIron2RoughnessTexture.Get());
-						rustedIron2RoughnessTexture = nullptr;
 					}
 				}
 			}

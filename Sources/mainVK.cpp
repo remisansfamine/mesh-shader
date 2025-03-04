@@ -349,6 +349,255 @@ bool SubmitBufferToGPU(VkBuffer _gpuBuffer, uint64_t _size, const void* _data)
 	return true;
 }
 
+bool SubmitTextureToGPU(VkImage _gpuTexture, const std::vector<SA::Vec2ui>& _extents, uint64_t _totalSize, const void* _data)
+{
+	VkBuffer stagingBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+	const VkBufferCreateInfo bufferInfo{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0u,
+		.size = _totalSize,
+		.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 0u,
+		.pQueueFamilyIndices = nullptr,
+	};
+
+	const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &stagingBuffer);
+	if (vrBufferCreated != VK_SUCCESS)
+	{
+		SA_LOG(L"Create Staging Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+		return false;
+	}
+
+	// Memory
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(device, stagingBuffer, &memRequirements);
+
+	const VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; // CPU-GPU.
+
+	const VkMemoryAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties),
+	};
+
+	const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory);
+	if (vrBufferAlloc != VK_SUCCESS)
+	{
+		SA_LOG(L"Create Staging Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+		return false;
+	}
+
+
+	const VkResult vrBindBufferMem = vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
+	if (vrBindBufferMem != VK_SUCCESS)
+	{
+		SA_LOG(L"Bind Staging Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+		return false;
+	}
+
+
+	// Memory mapping
+	void* data = nullptr;
+	vkMapMemory(device, stagingBufferMemory, 0, _totalSize, 0, &data);
+
+	std::memcpy(data, _data, _totalSize);
+
+	vkUnmapMemory(device, stagingBufferMemory);
+
+
+	// Transition Underfined -> Transfer
+	const VkImageMemoryBarrier barrier1{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.pNext = nullptr,
+		.srcAccessMask = 0u,
+		.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = _gpuTexture,
+		.subresourceRange{
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = static_cast<uint32_t>(_extents.size()),
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	vkCmdPipelineBarrier(
+		cmdBuffers[0],
+		VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier1
+	);
+
+
+	// Copy Buffer to texture
+	uint32_t offset = 0u;
+	std::vector<VkBufferImageCopy> regions(_extents.size());
+
+	for (uint32_t i = 0; i < _extents.size(); ++i)
+	{
+		regions[i] = VkBufferImageCopy{
+			.bufferOffset = offset,
+			.bufferRowLength = 0u,
+			.bufferImageHeight = 0,
+			.imageSubresource{
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.mipLevel = i,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+			.imageOffset = {0, 0, 0},
+			.imageExtent = {_extents[i].x, _extents[i].y, 1u },
+		};
+	}
+
+	vkCmdCopyBufferToImage(cmdBuffers[0],
+		stagingBuffer,
+		_gpuTexture,
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		static_cast<uint32_t>(regions.size()),
+		regions.data());
+
+
+	// Transition Transfer -> Shader Read
+	const VkImageMemoryBarrier barrier2{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+		.pNext = nullptr,
+		.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+		.dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+		.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+		.image = _gpuTexture,
+		.subresourceRange{
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.baseMipLevel = 0,
+			.levelCount = static_cast<uint32_t>(_extents.size()),
+			.baseArrayLayer = 0,
+			.layerCount = 1,
+		},
+	};
+
+	vkCmdPipelineBarrier(
+		cmdBuffers[0],
+		VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+		0,
+		0, nullptr,
+		0, nullptr,
+		1, &barrier2
+	);
+
+
+	// Submit
+	vkEndCommandBuffer(cmdBuffers[0]);
+
+	const VkSubmitInfo submitInfo{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = nullptr,
+		.waitSemaphoreCount = 0u,
+		.pWaitSemaphores = nullptr,
+		.pWaitDstStageMask = nullptr,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmdBuffers[0],
+		.signalSemaphoreCount = 0u,
+		.pSignalSemaphores = nullptr,
+	};
+
+	vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueWaitIdle(graphicsQueue);
+
+
+	// Ready for new submit.
+	const VkCommandBufferBeginInfo beginInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.pNext = nullptr,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		.pInheritanceInfo = nullptr,
+	};
+	vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
+
+
+	// Destroy
+	vkDestroyBuffer(device, stagingBuffer, nullptr);
+	vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+	return true;
+}
+
+void GenerateMipMapsCPU(SA::Vec2ui _extent, std::vector<char>& _data, uint32_t& _outMipLevels, uint32_t& _outTotalSize, std::vector<SA::Vec2ui>& _outExtents, uint32_t _channelNum, uint32_t _layerNum = 1u)
+{
+	_outMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(_extent.x, _extent.y)))) + 1;
+
+	_outExtents.resize(_outMipLevels);
+
+	// Compute Total Size & extents
+	{
+		for (uint32_t i = 0u; i < _outMipLevels; ++i)
+		{
+			_outExtents[i] = _extent;
+
+			_outTotalSize += _extent.x * _extent.y * _channelNum * _layerNum * sizeof(stbi_uc);
+
+			if (_extent.x > 1)
+				_extent.x >>= 1;
+
+			if (_extent.y > 1)
+				_extent.y >>= 1;
+		}
+	}
+
+
+	_data.resize(_outTotalSize);
+
+
+	// Generate
+	{
+		unsigned char* src = reinterpret_cast<unsigned char*>(_data.data());
+
+		for (uint32_t i = 1u; i < _outMipLevels; ++i)
+		{
+			uint64_t srcLayerOffset = _outExtents[i - 1].x * _outExtents[i - 1].y * _channelNum * sizeof(stbi_uc);
+			uint64_t currLayerOffset = _outExtents[i].x * _outExtents[i].y * _channelNum * sizeof(stbi_uc);
+			unsigned char* dst = src + srcLayerOffset * _layerNum;
+
+			for (uint32_t j = 0; j < _layerNum; ++j)
+			{
+				bool res = stbir_resize_uint8_linear(
+					src,
+					static_cast<int32_t>(_outExtents[i - 1].x),
+					static_cast<int32_t>(_outExtents[i - 1].y),
+					0,
+					dst,
+					static_cast<int32_t>(_outExtents[i].x),
+					static_cast<int32_t>(_outExtents[i].y),
+					0,
+					static_cast<stbir_pixel_layout>(_channelNum)
+				);
+
+				if (!res)
+				{
+					SA_LOG(L"Mip map creation failed!", Error, STB);
+					return;
+				}
+
+				dst += currLayerOffset;
+				src += srcLayerOffset;
+			}
+		}
+	}
+}
+
 #include <shaderc/shaderc.hpp>
 
 bool CompileShaderFromFile(const std::string& _path, shaderc_shader_kind _stage, std::vector<uint32_t>& _out)
@@ -414,7 +663,14 @@ VkBuffer sphereIndexBuffer = VK_NULL_HANDLE;
 VkDeviceMemory sphereIndexBufferMemory = VK_NULL_HANDLE;
 
 // = RustedIron2 PBR =
-
+VkImage rustedIron2AlbedoImage = VK_NULL_HANDLE;
+VkDeviceMemory rustedIron2AlbedoImageMemory = VK_NULL_HANDLE;
+VkImage rustedIron2NormalImage = VK_NULL_HANDLE;
+VkDeviceMemory rustedIron2NormalImageMemory = VK_NULL_HANDLE;
+VkImage rustedIron2MetallicImage = VK_NULL_HANDLE;
+VkDeviceMemory rustedIron2MetallicImageMemory = VK_NULL_HANDLE;
+VkImage rustedIron2RoughnessImage = VK_NULL_HANDLE;
+VkDeviceMemory rustedIron2RoughnessImageMemory = VK_NULL_HANDLE;
 
 
 int main()
@@ -2112,6 +2368,468 @@ int main()
 						}
 					}
 				}
+
+				// Textures
+				{
+					stbi_set_flip_vertically_on_load(true);
+
+					// Albedo
+					{
+						const char* path = "Resources/Textures/RustedIron2/rustediron2_basecolor.png";
+
+						int width, height, channels;
+						char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 4));
+						if (!inData)
+						{
+							SA_LOG((L"STBI Texture Loading {%1} failed", path), Error, STB, stbi_failure_reason());
+							return EXIT_FAILURE;
+						}
+
+						std::vector<char> data(inData, inData + width * height * channels);
+
+						uint32_t mipLevels = 0u;
+						uint32_t totalSize = 0u;
+						std::vector<SA::Vec2ui> mipExtents;
+						GenerateMipMapsCPU(
+							SA::Vec2ui{
+								static_cast<uint32_t>(width),
+								static_cast<uint32_t>(height)
+							},
+							data,
+							mipLevels,
+							totalSize,
+							mipExtents,
+							channels);
+
+
+						// Image
+						{
+							const VkImageCreateInfo imageInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.imageType = VK_IMAGE_TYPE_2D,
+								.format = VK_FORMAT_R8G8B8A8_UINT,
+								.extent{
+									.width = static_cast<uint32_t>(width),
+									.height = static_cast<uint32_t>(height),
+									.depth = 1u,
+								},
+								.mipLevels = mipLevels,
+								.arrayLayers = 1u,
+								.samples = VK_SAMPLE_COUNT_1_BIT,
+								.tiling = VK_IMAGE_TILING_OPTIMAL,
+								.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+								.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+							};
+
+							const VkResult vrImageCreated = vkCreateImage(device, &imageInfo, nullptr, &rustedIron2AlbedoImage);
+							if (vrImageCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture failed!", Error, VK, (L"Error code: %1", vrImageCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture success", Info, VK, rustedIron2AlbedoImage);
+							}
+						}
+
+
+						// ImageMemory
+						{
+							VkMemoryRequirements memRequirements;
+							vkGetImageMemoryRequirements(device, rustedIron2AlbedoImage, &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrImageAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &rustedIron2AlbedoImageMemory);
+							if (vrImageAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture Alloc failed!", Error, VK, (L"Error code: %1", vrImageAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture Alloc success", Info, VK, rustedIron2AlbedoImageMemory);
+							}
+						}
+
+						// Bind
+						{
+							const VkResult vrImageBindMem = vkBindImageMemory(device, rustedIron2AlbedoImage, rustedIron2AlbedoImageMemory, 0);
+							if (vrImageBindMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture Memory bind failed!", Error, VK, (L"Error code: %1", vrImageBindMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Albedo Texture Memory bind success", Info, VK);
+							}
+						}
+
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2AlbedoImage, mipExtents, totalSize, data.data());
+						if (!bSubmitSuccess)
+						{
+							SA_LOG(L"RustedIron2 Albedo Texture submit failed!", Error, VK);
+							return EXIT_FAILURE;
+						}
+
+						stbi_image_free(inData);
+					}
+
+					// Normal
+					{
+						const char* path = "Resources/Textures/RustedIron2/rustediron2_normal.png";
+
+						int width, height, channels;
+						char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 4));
+						if (!inData)
+						{
+							SA_LOG((L"STBI Texture Loading {%1} failed", path), Error, STB, stbi_failure_reason());
+							return EXIT_FAILURE;
+						}
+						channels = 4; // must force channels to 4 (format is RGBA).
+
+						std::vector<char> data(inData, inData + width * height * channels);
+
+						uint32_t mipLevels = 0u;
+						uint32_t totalSize = 0u;
+						std::vector<SA::Vec2ui> mipExtents;
+						GenerateMipMapsCPU(
+							SA::Vec2ui{
+								static_cast<uint32_t>(width),
+								static_cast<uint32_t>(height)
+							},
+							data,
+							mipLevels,
+							totalSize,
+							mipExtents,
+							channels);
+
+
+						// Image
+						{
+							const VkImageCreateInfo imageInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.imageType = VK_IMAGE_TYPE_2D,
+								.format = VK_FORMAT_R8G8B8A8_UINT,
+								.extent{
+									.width = static_cast<uint32_t>(width),
+									.height = static_cast<uint32_t>(height),
+									.depth = 1u,
+								},
+								.mipLevels = mipLevels,
+								.arrayLayers = 1u,
+								.samples = VK_SAMPLE_COUNT_1_BIT,
+								.tiling = VK_IMAGE_TILING_OPTIMAL,
+								.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+								.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+							};
+
+							const VkResult vrImageCreated = vkCreateImage(device, &imageInfo, nullptr, &rustedIron2NormalImage);
+							if (vrImageCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture failed!", Error, VK, (L"Error code: %1", vrImageCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture success", Info, VK, rustedIron2NormalImage);
+							}
+						}
+
+
+						// ImageMemory
+						{
+							VkMemoryRequirements memRequirements;
+							vkGetImageMemoryRequirements(device, rustedIron2NormalImage, &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrImageAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &rustedIron2NormalImageMemory);
+							if (vrImageAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture Alloc failed!", Error, VK, (L"Error code: %1", vrImageAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture Alloc success", Info, VK, rustedIron2NormalImageMemory);
+							}
+						}
+
+						// Bind
+						{
+							const VkResult vrImageBindMem = vkBindImageMemory(device, rustedIron2NormalImage, rustedIron2NormalImageMemory, 0);
+							if (vrImageBindMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture Memory bind failed!", Error, VK, (L"Error code: %1", vrImageBindMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Normal Texture Memory bind success", Info, VK);
+							}
+						}
+
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2NormalImage, mipExtents, totalSize, data.data());
+						if (!bSubmitSuccess)
+						{
+							SA_LOG(L"RustedIron2 Normal Texture submit failed!", Error, VK);
+							return EXIT_FAILURE;
+						}
+
+						stbi_image_free(inData);
+					}
+
+					// Metallic
+					{
+						const char* path = "Resources/Textures/RustedIron2/rustediron2_metallic.png";
+
+						int width, height, channels;
+						char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 1));
+						if (!inData)
+						{
+							SA_LOG((L"STBI Texture Loading {%1} failed", path), Error, STB, stbi_failure_reason());
+							return EXIT_FAILURE;
+						}
+
+						std::vector<char> data(inData, inData + width * height * channels);
+
+						uint32_t mipLevels = 0u;
+						uint32_t totalSize = 0u;
+						std::vector<SA::Vec2ui> mipExtents;
+						GenerateMipMapsCPU(
+							SA::Vec2ui{
+								static_cast<uint32_t>(width),
+								static_cast<uint32_t>(height)
+							},
+							data,
+							mipLevels,
+							totalSize,
+							mipExtents,
+							channels);
+
+
+						// Image
+						{
+							const VkImageCreateInfo imageInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.imageType = VK_IMAGE_TYPE_2D,
+								.format = VK_FORMAT_R8_UINT,
+								.extent{
+									.width = static_cast<uint32_t>(width),
+									.height = static_cast<uint32_t>(height),
+									.depth = 1u,
+								},
+								.mipLevels = mipLevels,
+								.arrayLayers = 1u,
+								.samples = VK_SAMPLE_COUNT_1_BIT,
+								.tiling = VK_IMAGE_TILING_OPTIMAL,
+								.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+								.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+							};
+
+							const VkResult vrImageCreated = vkCreateImage(device, &imageInfo, nullptr, &rustedIron2MetallicImage);
+							if (vrImageCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture failed!", Error, VK, (L"Error code: %1", vrImageCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture success", Info, VK, rustedIron2MetallicImage);
+							}
+						}
+
+
+						// ImageMemory
+						{
+							VkMemoryRequirements memRequirements;
+							vkGetImageMemoryRequirements(device, rustedIron2MetallicImage, &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrImageAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &rustedIron2MetallicImageMemory);
+							if (vrImageAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture Alloc failed!", Error, VK, (L"Error code: %1", vrImageAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture Alloc success", Info, VK, rustedIron2MetallicImageMemory);
+							}
+						}
+
+						// Bind
+						{
+							const VkResult vrImageBindMem = vkBindImageMemory(device, rustedIron2MetallicImage, rustedIron2MetallicImageMemory, 0);
+							if (vrImageBindMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture Memory bind failed!", Error, VK, (L"Error code: %1", vrImageBindMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Metallic Texture Memory bind success", Info, VK);
+							}
+						}
+
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2MetallicImage, mipExtents, totalSize, data.data());
+						if (!bSubmitSuccess)
+						{
+							SA_LOG(L"RustedIron2 Metallic Texture submit failed!", Error, VK);
+							return EXIT_FAILURE;
+						}
+
+						stbi_image_free(inData);
+					}
+
+					// Roughness
+					{
+						const char* path = "Resources/Textures/RustedIron2/rustediron2_roughness.png";
+
+						int width, height, channels;
+						char* inData = reinterpret_cast<char*>(stbi_load(path, &width, &height, &channels, 1));
+						if (!inData)
+						{
+							SA_LOG((L"STBI Texture Loading {%1} failed", path), Error, STB, stbi_failure_reason());
+							return EXIT_FAILURE;
+						}
+
+						std::vector<char> data(inData, inData + width * height * channels);
+
+						uint32_t mipLevels = 0u;
+						uint32_t totalSize = 0u;
+						std::vector<SA::Vec2ui> mipExtents;
+						GenerateMipMapsCPU(
+							SA::Vec2ui{
+								static_cast<uint32_t>(width),
+								static_cast<uint32_t>(height)
+							},
+							data,
+							mipLevels,
+							totalSize,
+							mipExtents,
+							channels);
+
+
+						// Image
+						{
+							const VkImageCreateInfo imageInfo{
+								.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.imageType = VK_IMAGE_TYPE_2D,
+								.format = VK_FORMAT_R8_UINT,
+								.extent{
+									.width = static_cast<uint32_t>(width),
+									.height = static_cast<uint32_t>(height),
+									.depth = 1u,
+								},
+								.mipLevels = mipLevels,
+								.arrayLayers = 1u,
+								.samples = VK_SAMPLE_COUNT_1_BIT,
+								.tiling = VK_IMAGE_TILING_OPTIMAL,
+								.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+								.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+							};
+
+							const VkResult vrImageCreated = vkCreateImage(device, &imageInfo, nullptr, &rustedIron2RoughnessImage);
+							if (vrImageCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture failed!", Error, VK, (L"Error code: %1", vrImageCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture success", Info, VK, rustedIron2RoughnessImage);
+							}
+						}
+
+
+						// ImageMemory
+						{
+							VkMemoryRequirements memRequirements;
+							vkGetImageMemoryRequirements(device, rustedIron2RoughnessImage, &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrImageAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &rustedIron2RoughnessImageMemory);
+							if (vrImageAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture Alloc failed!", Error, VK, (L"Error code: %1", vrImageAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture Alloc success", Info, VK, rustedIron2RoughnessImageMemory);
+							}
+						}
+
+						// Bind
+						{
+							const VkResult vrImageBindMem = vkBindImageMemory(device, rustedIron2RoughnessImage, rustedIron2RoughnessImageMemory, 0);
+							if (vrImageBindMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture Memory bind failed!", Error, VK, (L"Error code: %1", vrImageBindMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create RustedIron2 Roughness Texture Memory bind success", Info, VK);
+							}
+						}
+
+						const bool bSubmitSuccess = SubmitTextureToGPU(rustedIron2RoughnessImage, mipExtents, totalSize, data.data());
+						if (!bSubmitSuccess)
+						{
+							SA_LOG(L"RustedIron2 Roughness Texture submit failed!", Error, VK);
+							return EXIT_FAILURE;
+						}
+
+						stbi_image_free(inData);
+					}
+				}
 			}
 
 
@@ -2133,6 +2851,45 @@ int main()
 		{
 			// Resources
 			{
+
+				// Textures
+				{
+					// RustedIron2
+					{
+						// Roughness
+						vkDestroyImage(device, rustedIron2RoughnessImage, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Rroughness Image success.", Info, VK, rustedIron2RoughnessImage);
+						rustedIron2RoughnessImage = VK_NULL_HANDLE;
+						vkFreeMemory(device, rustedIron2RoughnessImageMemory, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Rroughness Image Memory success.", Info, VK, rustedIron2RoughnessImageMemory);
+						rustedIron2RoughnessImageMemory = VK_NULL_HANDLE;
+
+						// Metallic
+						vkDestroyImage(device, rustedIron2MetallicImage, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Metallic Image success.", Info, VK, rustedIron2MetallicImage);
+						rustedIron2MetallicImage = VK_NULL_HANDLE;
+						vkFreeMemory(device, rustedIron2MetallicImageMemory, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Metallic Image Memory success.", Info, VK, rustedIron2MetallicImageMemory);
+						rustedIron2MetallicImageMemory = VK_NULL_HANDLE;
+
+						// Normal
+						vkDestroyImage(device, rustedIron2NormalImage, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Normal Image success.", Info, VK, rustedIron2NormalImage);
+						rustedIron2NormalImage = VK_NULL_HANDLE;
+						vkFreeMemory(device, rustedIron2NormalImageMemory, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Normal Image Memory success.", Info, VK, rustedIron2NormalImageMemory);
+						rustedIron2NormalImageMemory = VK_NULL_HANDLE;
+
+						// Albedo
+						vkDestroyImage(device, rustedIron2AlbedoImage, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Albedo Image success.", Info, VK, rustedIron2AlbedoImage);
+						rustedIron2AlbedoImage = VK_NULL_HANDLE;
+						vkFreeMemory(device, rustedIron2AlbedoImageMemory, nullptr);
+						SA_LOG(L"Destroy RustedIron2 Albedo Image Memory success.", Info, VK, rustedIron2AlbedoImageMemory);
+						rustedIron2AlbedoImageMemory = VK_NULL_HANDLE;
+					}
+				}
+
 				// Meshes
 				{
 					// Sphere
