@@ -13,6 +13,8 @@
 #include <SA/Collections/Maths>
 #include <SA/Collections/Transform>
 
+
+
 // ========== Windowing ==========
 
 #include <GLFW/glfw3.h>
@@ -246,7 +248,6 @@ D3D12_VIEWPORT viewport{}; // VkViewport -> D3D12_VIEWPORT
 D3D12_RECT scissorRect{}; // VkRect2D -> D3D12_RECT
 
 // = Lit =
-
 /**
 * Basic helper shader compiler header.
 * For more advanced features use DirectXShaderCompiler library.
@@ -1865,6 +1866,7 @@ int main()
 							};
 
 
+							// Pack indices into uint16_t since max index < 65535.
 							std::vector<uint16_t> indices;
 							indices.resize(inMesh->mNumFaces * 3);
 							sphereIndexCount = inMesh->mNumFaces * 3;

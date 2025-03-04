@@ -16,74 +16,6 @@
 #include <SA/Collections/Transform>
 
 
-// Resource Loading
-#include <assimp/Importer.hpp>
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-
-#define STB_IMAGE_IMPLEMENTATION
-#include <stb_image.h>
-#define STB_IMAGE_RESIZE_IMPLEMENTATION
-#pragma warning(disable : 4505)
-#include <stb_image_resize2.h>
-#pragma warning(default : 4505)
-
-#include <shaderc/shaderc.hpp>
-
-bool CompileShaderFromFile(const std::string& _path, shaderc_shader_kind _stage, std::vector<uint32_t>& _out)
-{
-	// Read File
-	std::string code;
-	{
-		std::fstream fStream(_path, std::ios_base::in);
-
-		if (!fStream.is_open())
-		{
-			SA_LOG((L"Failed to open shader file {%1}", _path), Error, VK.Shader);
-			return false;
-		}
-
-
-		std::stringstream sstream;
-		sstream << fStream.rdbuf();
-
-		fStream.close();
-
-		code = sstream.str();
-	}
-
-	// Compile
-	static shaderc::Compiler compiler;
-
-	shaderc::CompileOptions options;
-
-#if SA_DEBUG
-	options.SetOptimizationLevel(shaderc_optimization_level_zero);
-#else
-	options.SetOptimizationLevel(shaderc_optimization_level_performance);
-#endif
-
-	const shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(code, _stage, _path.c_str(), options);
-
-	if (result.GetCompilationStatus() != shaderc_compilation_status_success)
-	{
-		SA_LOG((L"Compile Shader {%1} failed!", _path), Error, VK.Shader, (L"Errors: %1\tWarnings: %2\n%3", result.GetNumErrors(), result.GetNumWarnings(), result.GetErrorMessage()));
-		return false;
-	}
-	else if (result.GetNumWarnings())
-	{
-		SA_LOG((L"Compile Shader {%1} success with %2 warnings.", _path, result.GetNumWarnings()), Warning, VK.Shadar, result.GetErrorMessage());
-	}
-	else
-	{
-		SA_LOG((L"Compile Shader {%1} success.", _path), Info, VK.Shader);
-	}
-
-	_out = { result.cbegin(), result.cend() };
-
-	return true;
-}
-
 
 // ========== Windowing ==========
 
@@ -233,6 +165,7 @@ std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs{};
 
 
 // === Commands ===
+
 VkCommandPool cmdPool = VK_NULL_HANDLE;
 std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
 
@@ -267,15 +200,13 @@ uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
 
 
 // === RenderPass ===
+
 VkRenderPass renderPass = VK_NULL_HANDLE;
 
 
 // === Frame Buffer ===
+
 std::array<VkFramebuffer, bufferingCount> framebuffers{ VK_NULL_HANDLE };
-
-
-// === DescriptorSet ===
-VkDescriptorSetLayout litDescSetLayout = VK_NULL_HANDLE;
 
 
 // === Pipeline ===
@@ -285,12 +216,204 @@ VkViewport viewport{};
 VkRect2D scissorRect{};
 
 // = Lit =
+VkDescriptorSetLayout litDescSetLayout = VK_NULL_HANDLE;
 
 VkShaderModule litVertexShader = VK_NULL_HANDLE;
 VkShaderModule litFragmentShader = VK_NULL_HANDLE;
 
 VkPipelineLayout litPipelineLayout = VK_NULL_HANDLE;
 VkPipeline litPipeline = VK_NULL_HANDLE;
+
+
+// === Scene Objects ===
+
+// = DescriptorSets =
+
+
+// === Resources ===
+
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+#define STB_IMAGE_RESIZE_IMPLEMENTATION
+#pragma warning(disable : 4505)
+#include <stb_image_resize2.h>
+#pragma warning(default : 4505)
+
+bool SubmitBufferToGPU(VkBuffer _gpuBuffer, uint64_t _size, const void* _data)
+{
+	VkBuffer stagingBuffer = VK_NULL_HANDLE;
+	VkDeviceMemory stagingBufferMemory = VK_NULL_HANDLE;
+
+	const VkBufferCreateInfo bufferInfo{
+		.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+		.pNext = nullptr,
+		.flags = 0u,
+		.size = _size,
+		.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		.queueFamilyIndexCount = 0u,
+		.pQueueFamilyIndices = nullptr,
+	};
+
+	const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &stagingBuffer);
+	if (vrBufferCreated != VK_SUCCESS)
+	{
+		SA_LOG(L"Create Staging Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+		return false;
+	}
+
+	// Memory
+	VkMemoryRequirements memRequirements;
+	vkGetBufferMemoryRequirements(device, stagingBuffer, &memRequirements);
+
+	const VkMemoryPropertyFlags properties = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT; // CPU-GPU.
+
+	const VkMemoryAllocateInfo allocInfo{
+		.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+		.pNext = nullptr,
+		.allocationSize = memRequirements.size,
+		.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, properties),
+	};
+
+	const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &stagingBufferMemory);
+	if (vrBufferAlloc != VK_SUCCESS)
+	{
+		SA_LOG(L"Create Staging Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+		return false;
+	}
+
+
+	const VkResult vrBindBufferMem = vkBindBufferMemory(device, stagingBuffer, stagingBufferMemory, 0);
+	if (vrBindBufferMem != VK_SUCCESS)
+	{
+		SA_LOG(L"Bind Staging Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+		return false;
+	}
+
+
+	// Memory mapping
+	void* data = nullptr;
+	vkMapMemory(device, stagingBufferMemory, 0, _size, 0, &data);
+
+	std::memcpy(data, _data, _size);
+
+	vkUnmapMemory(device, stagingBufferMemory);
+
+
+	// Copy GPU temp staging buffer to final GPU-only buffer.
+	const VkBufferCopy copyRegion{
+		.srcOffset = 0u,
+		.dstOffset = 0u,
+		.size = _size,
+	};
+	vkCmdCopyBuffer(cmdBuffers[0], stagingBuffer, _gpuBuffer, 1, &copyRegion);
+
+
+	// Submit
+	vkEndCommandBuffer(cmdBuffers[0]);
+
+	const VkSubmitInfo submitInfo{
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = nullptr,
+		.waitSemaphoreCount = 0u,
+		.pWaitSemaphores = nullptr,
+		.pWaitDstStageMask = nullptr,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &cmdBuffers[0],
+		.signalSemaphoreCount = 0u,
+		.pSignalSemaphores = nullptr,
+	};
+
+	vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+	vkQueueWaitIdle(graphicsQueue);
+
+
+	// Ready for new submit.
+	const VkCommandBufferBeginInfo beginInfo{
+		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+		.pNext = nullptr,
+		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		.pInheritanceInfo = nullptr,
+	};
+	vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
+
+
+	// Destroy
+	vkDestroyBuffer(device, stagingBuffer, nullptr);
+	vkFreeMemory(device, stagingBufferMemory, nullptr);
+
+	return true;
+}
+
+#include <shaderc/shaderc.hpp>
+
+bool CompileShaderFromFile(const std::string& _path, shaderc_shader_kind _stage, std::vector<uint32_t>& _out)
+{
+	// Read File
+	std::string code;
+	{
+		std::fstream fStream(_path, std::ios_base::in);
+
+		if (!fStream.is_open())
+		{
+			SA_LOG((L"Failed to open shader file {%1}", _path), Error, VK.Shader);
+			return false;
+		}
+
+
+		std::stringstream sstream;
+		sstream << fStream.rdbuf();
+
+		fStream.close();
+
+		code = sstream.str();
+	}
+
+	// Compile
+	static shaderc::Compiler compiler;
+
+	shaderc::CompileOptions options;
+
+#if SA_DEBUG
+	options.SetOptimizationLevel(shaderc_optimization_level_zero);
+#else
+	options.SetOptimizationLevel(shaderc_optimization_level_performance);
+#endif
+
+	const shaderc::SpvCompilationResult result = compiler.CompileGlslToSpv(code, _stage, _path.c_str(), options);
+
+	if (result.GetCompilationStatus() != shaderc_compilation_status_success)
+	{
+		SA_LOG((L"Compile Shader {%1} failed!", _path), Error, VK.Shader, (L"Errors: %1\tWarnings: %2\n%3", result.GetNumErrors(), result.GetNumWarnings(), result.GetErrorMessage()));
+		return false;
+	}
+	else if (result.GetNumWarnings())
+	{
+		SA_LOG((L"Compile Shader {%1} success with %2 warnings.", _path, result.GetNumWarnings()), Warning, VK.Shadar, result.GetErrorMessage());
+	}
+	else
+	{
+		SA_LOG((L"Compile Shader {%1} success.", _path), Info, VK.Shader);
+	}
+
+	_out = { result.cbegin(), result.cend() };
+
+	return true;
+}
+
+// = Sphere =
+std::array<VkBuffer, 4> sphereVertexBuffers { VK_NULL_HANDLE };
+std::array<VkDeviceMemory, 4> sphereVertexBufferMemories{ VK_NULL_HANDLE };
+
+uint32_t sphereIndexCount = 0u;
+VkBuffer sphereIndexBuffer = VK_NULL_HANDLE;
+VkDeviceMemory sphereIndexBufferMemory = VK_NULL_HANDLE;
+
+// = RustedIron2 PBR =
 
 
 
@@ -337,6 +460,7 @@ int main()
 		// Renderer
 		{
 			// Instance
+			if (true)
 			{
 				const VkApplicationInfo appInfo{
 					.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -429,6 +553,7 @@ int main()
 
 
 			// Surface
+			if (true)
 			{
 				/**
 				* Create Vulkan Surface from GLFW window.
@@ -448,6 +573,7 @@ int main()
 
 
 			// Device
+			if (true)
 			{
 				// Query physical devices
 				uint32_t deviceCount = 0;
@@ -661,6 +787,7 @@ int main()
 
 
 			// Swapchain
+			if (true)
 			{
 				// Query Support Details
 				VkSurfaceCapabilitiesKHR capabilities;
@@ -914,6 +1041,7 @@ int main()
 
 
 			// Commands
+			if (true)
 			{
 				// Pool
 				{
@@ -965,6 +1093,7 @@ int main()
 
 
 			// Scene Resources
+			if (true)
 			{
 				// Depth Texture
 				{
@@ -1077,6 +1206,7 @@ int main()
 			}
 
 			// Render Pass
+			if (true)
 			{
 				const std::array<VkAttachmentDescription, 2> attachments{
 					VkAttachmentDescription{
@@ -1162,6 +1292,7 @@ int main()
 
 
 			// Framebuffers
+			if (true)
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
@@ -1196,85 +1327,8 @@ int main()
 			}
 
 
-			// DescriptorSet
-			{
-				// Lit
-				{
-					std::array<VkDescriptorSetLayoutBinding, 7> bindings{
-						VkDescriptorSetLayoutBinding{ // Camera buffer
-							.binding = 0,
-							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // Object buffer
-							.binding = 1,
-							.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // PBR Albedo
-							.binding = 2,
-							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // PBR NormalMap
-							.binding = 3,
-							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // PBR MetallicMap
-							.binding = 4,
-							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // PBR RoughnessMap
-							.binding = 5,
-							.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-						VkDescriptorSetLayoutBinding{ // PointLights buffer
-							.binding = 6,
-							.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
-							.descriptorCount = 1,
-							.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-							.pImmutableSamplers = nullptr,
-						},
-					};
-
-					const VkDescriptorSetLayoutCreateInfo layoutInfo{
-						.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-						.pNext = nullptr,
-						.flags = 0u,
-						.bindingCount = static_cast<uint32_t>(bindings.size()),
-						.pBindings = bindings.data(),
-					};
-
-					const VkResult vrDescLayoutCreated = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &litDescSetLayout);
-					if (vrDescLayoutCreated != VK_SUCCESS)
-					{
-						SA_LOG(L"Create Lit DescriptorSet Layout failed!", Error, VK, (L"Error Code: %1", vrDescLayoutCreated));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						SA_LOG(L"Create Lit DescriptorSet Layout success.", Info, VK, litDescSetLayout);
-					}
-				}
-			}
-
-
 			// Pipeline
+			if (true)
 			{
 				// Viewport & Scissor
 				{
@@ -1296,6 +1350,81 @@ int main()
 
 				// Lit
 				{
+					// DescriptorSetLayout
+					{
+						std::array<VkDescriptorSetLayoutBinding, 7> bindings{
+							VkDescriptorSetLayoutBinding{ // Camera buffer
+								.binding = 0,
+								.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // Object buffer
+								.binding = 1,
+								.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // PBR Albedo
+								.binding = 2,
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // PBR NormalMap
+								.binding = 3,
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // PBR MetallicMap
+								.binding = 4,
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // PBR RoughnessMap
+								.binding = 5,
+								.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+							VkDescriptorSetLayoutBinding{ // PointLights buffer
+								.binding = 6,
+								.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+								.descriptorCount = 1,
+								.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+								.pImmutableSamplers = nullptr,
+							},
+						};
+
+						const VkDescriptorSetLayoutCreateInfo layoutInfo{
+							.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+							.pNext = nullptr,
+							.flags = 0u,
+							.bindingCount = static_cast<uint32_t>(bindings.size()),
+							.pBindings = bindings.data(),
+						};
+
+						const VkResult vrDescLayoutCreated = vkCreateDescriptorSetLayout(device, &layoutInfo, nullptr, &litDescSetLayout);
+						if (vrDescLayoutCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Create Lit DescriptorSet Layout failed!", Error, VK, (L"Error Code: %1", vrDescLayoutCreated));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit DescriptorSet Layout success.", Info, VK, litDescSetLayout);
+						}
+					}
+
+
 					// Pipeline Layout
 					{
 						const VkPipelineLayoutCreateInfo pipelineLayoutInfo{
@@ -1594,6 +1723,399 @@ int main()
 					}
 				}
 			}
+
+
+			const VkCommandBufferBeginInfo beginInfo{
+				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+				.pNext = nullptr,
+				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+				.pInheritanceInfo = nullptr,
+			};
+			vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
+
+
+			// Resources
+			if (true)
+			{
+				Assimp::Importer importer;
+
+				// Meshes
+				{
+					// Sphere
+					{
+						const char* path = "Resources/Models/Shapes/sphere.obj";
+						const aiScene* scene = importer.ReadFile(path, aiProcess_CalcTangentSpace | aiProcess_ConvertToLeftHanded);
+						if (!scene)
+						{
+							SA_LOG(L"Assimp loading failed!", Error, Assimp, path);
+							return EXIT_FAILURE;
+						}
+
+						const aiMesh* inMesh = scene->mMeshes[0];
+
+						// Position
+						{
+							const VkBufferCreateInfo bufferInfo{
+								.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.size = sizeof(SA::Vec3f) * inMesh->mNumVertices,
+								.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+							};
+
+							const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereVertexBuffers[0]);
+							if (vrBufferCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Position Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Position Buffer success", Info, VK, sphereVertexBuffers[0]);
+							}
+
+
+							// Memory
+							VkMemoryRequirements memRequirements;
+							vkGetBufferMemoryRequirements(device, sphereVertexBuffers[0], &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereVertexBufferMemories[0]);
+							if (vrBufferAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Position Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Position Buffer Memory success", Info, VK, sphereVertexBufferMemories[0]);
+							}
+
+
+							const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereVertexBuffers[0], sphereVertexBufferMemories[0], 0);
+							if (vrBindBufferMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Bind Sphere Vertex Position Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Bind Sphere Vertex Position Buffer Memory success", Info, VK);
+							}
+
+
+							// Submit
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[0], bufferInfo.size, inMesh->mVertices);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Position Buffer submit failed!", Error, VK);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// Normal
+						{
+							const VkBufferCreateInfo bufferInfo{
+								.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.size = sizeof(SA::Vec3f) * inMesh->mNumVertices,
+								.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+							};
+
+							const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereVertexBuffers[1]);
+							if (vrBufferCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Normal Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Normal Buffer success", Info, VK, sphereVertexBuffers[1]);
+							}
+
+
+							// Memory
+							VkMemoryRequirements memRequirements;
+							vkGetBufferMemoryRequirements(device, sphereVertexBuffers[1], &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereVertexBufferMemories[1]);
+							if (vrBufferAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Normal Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Normal Buffer Memory success", Info, VK, sphereVertexBufferMemories[1]);
+							}
+
+
+							const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereVertexBuffers[1], sphereVertexBufferMemories[1], 0);
+							if (vrBindBufferMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Bind Sphere Vertex Normal Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Bind Sphere Vertex Normal Buffer Memory success", Info, VK);
+							}
+
+
+							// Submit
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[1], bufferInfo.size, inMesh->mNormals);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Normal Buffer submit failed!", Error, VK);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// Tangent
+						{
+							const VkBufferCreateInfo bufferInfo{
+								.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.size = sizeof(SA::Vec3f) * inMesh->mNumVertices,
+								.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+							};
+
+							const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereVertexBuffers[2]);
+							if (vrBufferCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Tangent Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Tangent Buffer success", Info, VK, sphereVertexBuffers[2]);
+							}
+
+
+							// Memory
+							VkMemoryRequirements memRequirements;
+							vkGetBufferMemoryRequirements(device, sphereVertexBuffers[2], &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereVertexBufferMemories[2]);
+							if (vrBufferAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex Tangent Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex Tangent Buffer Memory success", Info, VK, sphereVertexBufferMemories[2]);
+							}
+
+
+							const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereVertexBuffers[2], sphereVertexBufferMemories[2], 0);
+							if (vrBindBufferMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Bind Sphere Vertex Tangent Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Bind Sphere Vertex Tangent Buffer Memory success", Info, VK);
+							}
+
+
+							// Submit
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[2], bufferInfo.size, inMesh->mTangents);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex Tangent Buffer submit failed!", Error, VK);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// UV
+						{
+							const VkBufferCreateInfo bufferInfo{
+								.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.size = sizeof(SA::Vec2f) * inMesh->mNumVertices,
+								.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+							};
+
+							const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereVertexBuffers[3]);
+							if (vrBufferCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex UV Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex UV Buffer success", Info, VK, sphereVertexBuffers[3]);
+							}
+
+
+							// Memory
+							VkMemoryRequirements memRequirements;
+							vkGetBufferMemoryRequirements(device, sphereVertexBuffers[3], &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereVertexBufferMemories[3]);
+							if (vrBufferAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Vertex UV Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Vertex UV Buffer Memory success", Info, VK, sphereVertexBufferMemories[3]);
+							}
+
+
+							const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereVertexBuffers[3], sphereVertexBufferMemories[3], 0);
+							if (vrBindBufferMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Bind Sphere Vertex UV Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Bind Sphere Vertex UV Buffer Memory success", Info, VK);
+							}
+
+
+							// Submit
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[3], bufferInfo.size, inMesh->mVertices);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Vertex UV Buffer submit failed!", Error, VK);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// Index
+						{
+							const VkBufferCreateInfo bufferInfo{
+								.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+								.pNext = nullptr,
+								.flags = 0u,
+								.size = sizeof(uint16_t) * inMesh->mNumFaces * 3,
+								.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+								.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+								.queueFamilyIndexCount = 0u,
+								.pQueueFamilyIndices = nullptr,
+							};
+
+							const VkResult vrBufferCreated = vkCreateBuffer(device, &bufferInfo, nullptr, &sphereIndexBuffer);
+							if (vrBufferCreated != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Index Buffer failed!", Error, VK, (L"Error code: %1", vrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Index Buffer success", Info, VK, sphereIndexBuffer);
+							}
+
+
+							// Memory
+							VkMemoryRequirements memRequirements;
+							vkGetBufferMemoryRequirements(device, sphereIndexBuffer, &memRequirements);
+
+							const VkMemoryAllocateInfo allocInfo{
+								.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+								.pNext = nullptr,
+								.allocationSize = memRequirements.size,
+								.memoryTypeIndex = FindMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT),
+							};
+
+							const VkResult vrBufferAlloc = vkAllocateMemory(device, &allocInfo, nullptr, &sphereIndexBufferMemory);
+							if (vrBufferAlloc != VK_SUCCESS)
+							{
+								SA_LOG(L"Create Sphere Index Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBufferAlloc));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Create Sphere Index Buffer Memory success", Info, VK, sphereIndexBufferMemory);
+							}
+
+
+							const VkResult vrBindBufferMem = vkBindBufferMemory(device, sphereIndexBuffer, sphereIndexBufferMemory, 0);
+							if (vrBindBufferMem != VK_SUCCESS)
+							{
+								SA_LOG(L"Bind Sphere Index Buffer Memory failed!", Error, VK, (L"Error code: %1", vrBindBufferMem));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								SA_LOG(L"Bind Sphere Index Buffer Memory success", Info, VK);
+							}
+
+
+							// Pack indices into uint16_t since max index < 65535.
+							std::vector<uint16_t> indices;
+							indices.resize(inMesh->mNumFaces * 3);
+							sphereIndexCount = inMesh->mNumFaces * 3;
+
+							for (unsigned int i = 0; i < inMesh->mNumFaces; ++i)
+							{
+								indices[i * 3] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[0]);
+								indices[i * 3 + 1] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[1]);
+								indices[i * 3 + 2] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[2]);
+							}
+
+
+							// Submit
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereIndexBuffer, bufferInfo.size, indices.data());
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Index Buffer submit failed!", Error, VK);
+								return EXIT_FAILURE;
+							}
+						}
+					}
+				}
+			}
+
+
+			vkEndCommandBuffer(cmdBuffers[0]);
 		}
 	}
 
@@ -1609,6 +2131,56 @@ int main()
 	{
 		// Renderer
 		{
+			// Resources
+			{
+				// Meshes
+				{
+					// Sphere
+					{
+						// Index
+						vkDestroyBuffer(device, sphereIndexBuffer, nullptr);
+						SA_LOG(L"Destroy Sphere Index Buffer success.", Info, VK, sphereIndexBuffer);
+						sphereIndexBuffer = VK_NULL_HANDLE;
+						vkFreeMemory(device, sphereIndexBufferMemory, nullptr);
+						SA_LOG(L"Destroy Sphere Index Buffer Memory success.", Info, VK, sphereIndexBufferMemory);
+						sphereIndexBufferMemory = VK_NULL_HANDLE;
+
+						// UV
+						vkDestroyBuffer(device, sphereVertexBuffers[3], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex UV Buffer success.", Info, VK, sphereVertexBuffers[3]);
+						sphereVertexBuffers[3] = VK_NULL_HANDLE;
+						vkFreeMemory(device, sphereVertexBufferMemories[3], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex UV Buffer Memory success.", Info, VK, sphereVertexBufferMemories[3]);
+						sphereVertexBufferMemories[3] = VK_NULL_HANDLE;
+
+						// Tangent
+						vkDestroyBuffer(device, sphereVertexBuffers[2], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Tangent Buffer success.", Info, VK, sphereVertexBuffers[2]);
+						sphereVertexBuffers[2] = VK_NULL_HANDLE;
+						vkFreeMemory(device, sphereVertexBufferMemories[2], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Tangent Buffer Memory success.", Info, VK, sphereVertexBufferMemories[2]);
+						sphereVertexBufferMemories[2] = VK_NULL_HANDLE;
+
+						// Normal
+						vkDestroyBuffer(device, sphereVertexBuffers[1], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Normal Buffer success.", Info, VK, sphereVertexBuffers[1]);
+						sphereVertexBuffers[1] = VK_NULL_HANDLE;
+						vkFreeMemory(device, sphereVertexBufferMemories[1], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Normal Buffer Memory success.", Info, VK, sphereVertexBufferMemories[1]);
+						sphereVertexBufferMemories[1] = VK_NULL_HANDLE;
+
+						// Position
+						vkDestroyBuffer(device, sphereVertexBuffers[0], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Position Buffer success.", Info, VK, sphereVertexBuffers[0]);
+						sphereVertexBuffers[0] = VK_NULL_HANDLE;
+						vkFreeMemory(device, sphereVertexBufferMemories[0], nullptr);
+						SA_LOG(L"Destroy Sphere Vertex Position Buffer Memory success.", Info, VK, sphereVertexBufferMemories[0]);
+						sphereVertexBufferMemories[0] = VK_NULL_HANDLE;
+					}
+				}
+			}
+
+
 			// Pipeline
 			{
 				// Lit
