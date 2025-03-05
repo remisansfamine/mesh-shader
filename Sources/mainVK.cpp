@@ -117,6 +117,7 @@ std::vector<const char*> vkInstanceExts{
 };
 
 VkInstance instance = VK_NULL_HANDLE;
+VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
 
 
 // === Surface ===
@@ -865,6 +866,29 @@ int main()
 				{
 					SA_LOG("Create VkInstance success.", Info, GLFW, instance);
 				}
+
+#if SA_DEBUG
+				// Validation Layers
+				{
+					auto createDebugFunc = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+					if (createDebugFunc)
+					{
+						const VkResult vrDebugCreated = createDebugFunc(instance, &debugUtilsInfo, nullptr, &debugMessenger);
+						if (vrDebugCreated != VK_SUCCESS)
+						{
+							SA_LOG(L"Failed to create vulkan debug messenger!", Warning, VK);
+						}
+						else
+						{
+							SA_LOG(L"Debug Messenger created.", Info, VK, debugMessenger);
+						}
+					}
+					else
+					{
+						SA_LOG(L"Extension PFN_vkCreateDebugUtilsMessengerEXT missing!", Warning, VK);
+					}
+				}
+#endif
 			}
 
 
@@ -4106,6 +4130,20 @@ int main()
 
 			// Instance
 			{
+#if SA_DEBUG
+				auto destroyDebugFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+				if (destroyDebugFunc)
+				{
+					destroyDebugFunc(instance, debugMessenger, nullptr);
+					SA_LOG(L"Destroy Debug Messenger success.", Info, VK, debugMessenger);
+					debugMessenger = VK_NULL_HANDLE;
+				}
+				else
+				{
+					SA_LOG(L"Extension PFN_vkDestroyDebugUtilsMessengerEXT missing!", Warning, VK);
+				}
+#endif
+
 				vkDestroyInstance(instance, nullptr);
 				SA_LOG(L"Destroy Instance success", Info, VK, instance);
 				instance = VK_NULL_HANDLE;
