@@ -1302,15 +1302,17 @@ int main()
 
 				// Synchronization
 				{
-					VkSemaphoreCreateInfo semaphoreCreateInfo{};
-					semaphoreCreateInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-					semaphoreCreateInfo.pNext = nullptr;
-					semaphoreCreateInfo.flags = 0u;
+					const VkSemaphoreCreateInfo semaphoreCreateInfo{
+						.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = 0u,
+					};
 
-					VkFenceCreateInfo fenceCreateInfo{};
-					fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-					fenceCreateInfo.pNext = nullptr;
-					fenceCreateInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+					const VkFenceCreateInfo fenceCreateInfo{
+						.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+						.pNext = nullptr,
+						.flags = VK_FENCE_CREATE_SIGNALED_BIT,
+					};
 
 					for (uint32_t i = 0; i < bufferingCount; ++i)
 					{
