@@ -988,7 +988,8 @@ int main()
 							//	currPhysicalDeviceQueueFamilies.computeFamily = i;
 
 							// Present family.
-							if (currPhysicalDeviceQueueFamilies.presentFamily == uint32_t(-1))
+							if (currPhysicalDeviceQueueFamilies.presentFamily == uint32_t(-1) ||
+								currPhysicalDeviceQueueFamilies.graphicsFamily == currPhysicalDeviceQueueFamilies.presentFamily)
 							{
 								VkBool32 presentSupport = false;
 								const VkResult vrSupportKHR = vkGetPhysicalDeviceSurfaceSupportKHR(currPhysicalDevice, i, windowSurface, &presentSupport);
@@ -998,7 +999,7 @@ int main()
 									return EXIT_SUCCESS;
 								}
 
-								if (presentSupport == VK_SUCCESS)
+								if (presentSupport)
 									currPhysicalDeviceQueueFamilies.presentFamily = i;
 							}
 						}
