@@ -108,7 +108,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL ValidationLayersDebugCallback(
 #endif
 
 
-// === Instance ===
+// === Instance === /* 0001 */
 
 std::vector<const char*> vkInstanceExts{
 #if SA_DEBUG
@@ -120,12 +120,12 @@ VkInstance instance = VK_NULL_HANDLE;
 VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
 
 
-// === Surface ===
+// === Surface === /* 0003-0 */
 
 VkSurfaceKHR windowSurface = VK_NULL_HANDLE;
 
 
-// === Device ===
+// === Device === /* 0002 */
 
 struct QueueFamilyIndices
 {
@@ -148,7 +148,7 @@ VkQueue graphicsQueue = VK_NULL_HANDLE;
 VkQueue presentQueue = VK_NULL_HANDLE;
 
 
-// === Swapchain ===
+// === Swapchain === /* 0003 */
 
 constexpr uint32_t bufferingCount = 3;
 
@@ -158,6 +158,7 @@ std::array<VkImageView, bufferingCount> swapchainImageViews{ VK_NULL_HANDLE };
 uint32_t swapchainFrameIndex = 0u;
 uint32_t swapchainImageIndex = 0u;
 
+/* 0003.1 */
 struct SwapchainSynchronisation
 {
 	VkSemaphore acquireSemaphore = VK_NULL_HANDLE;
@@ -167,13 +168,13 @@ struct SwapchainSynchronisation
 std::array<SwapchainSynchronisation, bufferingCount> swapchainSyncs{};
 
 
-// === Commands ===
+// === Commands === /* 0004 */
 
 VkCommandPool cmdPool = VK_NULL_HANDLE;
 std::array<VkCommandBuffer, bufferingCount> cmdBuffers{ VK_NULL_HANDLE };
 
 
-// === Scene Textures ===
+// === Scene Textures === /* 0005 */
 
 // = Color =
 VkFormat sceneColorFormat = VK_FORMAT_R8G8B8A8_SRGB;
@@ -208,35 +209,35 @@ uint32_t FindMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties)
 }
 
 
-// === RenderPass ===
+// === RenderPass === /* 0006 */
 
 VkRenderPass renderPass = VK_NULL_HANDLE;
 
 
-// === Frame Buffer ===
+// === Frame Buffer === /* 0007 */
 
 std::array<VkFramebuffer, bufferingCount> framebuffers{ VK_NULL_HANDLE };
 
 
-// === Pipeline ===
+// === Pipeline === /* 0008 */
 
 // = Viewport & Scissor =
 VkViewport viewport{};
 VkRect2D scissorRect{};
 
 // = Lit =
-VkDescriptorSetLayout litDescSetLayout = VK_NULL_HANDLE;
+VkDescriptorSetLayout litDescSetLayout = VK_NULL_HANDLE; /* 0011-1 */
 
 VkShaderModule litVertexShader = VK_NULL_HANDLE;
 VkShaderModule litFragmentShader = VK_NULL_HANDLE;
 
-VkPipelineLayout litPipelineLayout = VK_NULL_HANDLE;
+VkPipelineLayout litPipelineLayout = VK_NULL_HANDLE; /* 0008-1 */
 VkPipeline litPipeline = VK_NULL_HANDLE;
 
 
-// === Scene Objects ===
+// === Scene Objects === /* 0009 */
 
-// = DescriptorSets =
+// = DescriptorSets = /* 0011 */
 VkDescriptorPool pbrSphereDescPool = VK_NULL_HANDLE;
 std::array<VkDescriptorSet, bufferingCount> pbrSphereDescSets{ VK_NULL_HANDLE };
 
@@ -280,7 +281,7 @@ VkBuffer pointLightBuffer;
 VkDeviceMemory pointLightBufferMemory;
 
 
-// === Resources ===
+// === Resources === /* 0010 */
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -776,7 +777,7 @@ int main()
 
 		// Renderer
 		{
-			// Instance
+			// Instance /* 0001-I */
 			if (true)
 			{
 				const VkApplicationInfo appInfo{
@@ -801,7 +802,7 @@ int main()
 				};
 
 #if SA_DEBUG
-				// Validation Layers
+				// Validation Layers /* 0001-I1 */
 				// Check Validation Layers Support
 				{
 					// Query currently supported layers.
@@ -868,7 +869,7 @@ int main()
 				}
 
 #if SA_DEBUG
-				// Validation Layers
+				// Validation Layers /* 0001-I2 */
 				{
 					auto createDebugFunc = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
 					if (createDebugFunc)
@@ -892,7 +893,7 @@ int main()
 			}
 
 
-			// Surface
+			// Surface /* 0003-0-I */
 			if (true)
 			{
 				/**
@@ -912,7 +913,7 @@ int main()
 			}
 
 
-			// Device
+			// Device /* 0002-I */
 			if (true)
 			{
 				// Query physical devices
@@ -1097,7 +1098,7 @@ int main()
 				};
 
 #if SA_DEBUG
-
+				/* 0002-I1 */
 				deviceCreateInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
 				deviceCreateInfo.ppEnabledLayerNames = validationLayers.data();
 
@@ -1115,7 +1116,7 @@ int main()
 				}
 
 
-				// Create Queues
+				// Create Queues /* 0002-I2 */
 				vkGetDeviceQueue(device, deviceQueueFamilyIndices.graphicsFamily, 0, &graphicsQueue);
 				SA_LOG(L"Create Graphics Queue success.", Info, VK, graphicsQueue);
 
@@ -1127,7 +1128,7 @@ int main()
 			}
 
 
-			// Swapchain
+			// Swapchain /* 0003-I */
 			if (true)
 			{
 				// Query Support Details
@@ -1268,7 +1269,7 @@ int main()
 				}
 
 
-				// Query backbuffer images.
+				// Query backbuffer images. /* 0003-I1 */
 				uint32_t swapchainImageNum = bufferingCount;
 				const VkResult vrGetSwapchainImages = vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageNum, swapchainImages.data());
 				if (vrGetSwapchainImages != VK_SUCCESS || swapchainImageNum != bufferingCount)
@@ -1285,7 +1286,7 @@ int main()
 				}
 
 
-				// Image Views
+				// Image Views /* 0003-I2 */
 				{
 					for (uint32_t i = 0; i < bufferingCount; ++i)
 					{
@@ -1325,7 +1326,7 @@ int main()
 				}
 
 
-				// Synchronization
+				// Synchronization /* 0003.1-I */
 				{
 					const VkSemaphoreCreateInfo semaphoreCreateInfo{
 						.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -1383,10 +1384,10 @@ int main()
 			}
 
 
-			// Commands
+			// Commands  /* 0004-I */
 			if (true)
 			{
-				// Pool
+				// Pool /* 0004-I1 */
 				{
 					const VkCommandPoolCreateInfo createInfo{
 						.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -1408,7 +1409,7 @@ int main()
 				}
 
 
-				// CmdBuffers
+				// CmdBuffers /* 0004-I2 */
 				{
 					VkCommandBufferAllocateInfo allocInfo{
 						.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -1435,10 +1436,10 @@ int main()
 			}
 
 
-			// Scene Resources
+			// Scene Resources /* 0005-I */
 			if (true)
 			{
-				// Depth Texture
+				// Depth Texture /* 0005-I1 */
 				{
 					// Image
 					{
@@ -1548,7 +1549,7 @@ int main()
 				}
 			}
 
-			// Render Pass
+			// Render Pass /* 0006-I */
 			if (true)
 			{
 				const std::array<VkAttachmentDescription, 2> attachments{
@@ -1634,7 +1635,7 @@ int main()
 			}
 
 
-			// Framebuffers
+			// Framebuffers /* 0007-I */
 			if (true)
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)
@@ -1670,7 +1671,7 @@ int main()
 			}
 
 
-			// Pipeline
+			// Pipeline /* 0008-I */
 			if (true)
 			{
 				// Viewport & Scissor
@@ -1693,7 +1694,7 @@ int main()
 
 				// Lit
 				{
-					// DescriptorSetLayout
+					// DescriptorSetLayout /* 0011-1-I */
 					{
 						std::array<VkDescriptorSetLayoutBinding, 7> bindings{
 							VkDescriptorSetLayoutBinding{ // Camera buffer
@@ -1768,8 +1769,11 @@ int main()
 					}
 
 
-					// Pipeline Layout
+					// Pipeline Layout /* 0008-1-I */
 					{
+						/**
+						* Directly uses DescriptorSetLayouts
+						*/
 						const VkPipelineLayoutCreateInfo pipelineLayoutInfo{
 							.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
 							.pNext = nullptr,
@@ -2077,7 +2081,7 @@ int main()
 			vkBeginCommandBuffer(cmdBuffers[0], &beginInfo);
 
 
-			// Resources
+			// Resources /* 00010-I */
 			if (true)
 			{
 				Assimp::Importer importer;
@@ -3113,7 +3117,7 @@ int main()
 				}
 			}
 
-			// Scene Objects
+			// Scene Objects /* 009-I */
 			if (true)
 			{
 				// Camera Buffers
@@ -3331,7 +3335,7 @@ int main()
 				}
 
 
-				// PBR Sphere Descriptor Sets
+				// PBR Sphere Descriptor Sets /* 0011-2-I */
 				{
 					// Desc Pool
 					{
@@ -3542,6 +3546,7 @@ int main()
 
 
 	// Loop
+	if (true)
 	{
 		double oldMouseX = 0.0f;
 		double oldMouseY = 0.0f;
@@ -3613,7 +3618,7 @@ int main()
 
 			// Render
 			{
-				// Swapchain Begin
+				// Swapchain Begin  /* 0003-U */
 				{
 					// Wait current Fence.
 					vkWaitForFences(device, 1, &swapchainSyncs[swapchainFrameIndex].fence, true, UINT64_MAX);
@@ -3649,7 +3654,7 @@ int main()
 				}
 
 
-				// Register Commands
+				// Register Commands /* 0004-U */
 				auto cmd = cmdBuffers[swapchainFrameIndex];
 				{
 					vkResetCommandBuffer(cmd, 0);
@@ -3663,7 +3668,7 @@ int main()
 					vkBeginCommandBuffer(cmd, &beginInfo);
 
 
-					// RenderPass Begin
+					// RenderPass Begin /* 0006-U1 */
 					std::array<VkClearValue, 2> clears{
 						sceneClearColor,
 						sceneClearDepth
@@ -3673,7 +3678,7 @@ int main()
 						.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
 						.pNext = nullptr,
 						.renderPass = renderPass,
-						.framebuffer = framebuffers[swapchainImageIndex],
+						.framebuffer = framebuffers[swapchainImageIndex], /* 0007-U */
 						.renderArea{
 							.offset = { 0, 0 },
 							.extent = { windowSize.x, windowSize.y },
@@ -3682,10 +3687,11 @@ int main()
 						.pClearValues = clears.data(),
 					};
 
+					/* 0006-U1 */
 					vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 
 
-					// Lit Pipeline
+					// Lit Pipeline /* 0008-U */
 					vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, litPipeline);
 
 					vkCmdSetViewport(cmd, 0, 1, &viewport);
@@ -3700,6 +3706,7 @@ int main()
 						offsets.data());
 					vkCmdBindIndexBuffer(cmd, sphereIndexBuffer, 0, VK_INDEX_TYPE_UINT16);
 
+					/* 0011-U */
 					vkCmdBindDescriptorSets(cmd,
 						VK_PIPELINE_BIND_POINT_GRAPHICS,
 						litPipelineLayout, 0, 1,
@@ -3709,14 +3716,15 @@ int main()
 					vkCmdDrawIndexed(cmd, sphereIndexCount, 1, 0, 0, 0);
 
 
-					// End Renderpass
+					// End Renderpass /* 0006-U2 */
 					vkCmdEndRenderPass(cmd);
 
 					vkEndCommandBuffer(cmd);
 				}
 
 
-				// Swapchain End
+				// Swapchain End /* 0003-U2 */
+				if(true)
 				{
 					// Submit graphics.
 					{
@@ -3781,7 +3789,7 @@ int main()
 			vkDeviceWaitIdle(device);
 
 
-			// Resources
+			// Resources /* 0010-D */
 			{
 				// Samplers
 				{
@@ -3888,7 +3896,7 @@ int main()
 			}
 
 
-			// Scene Objects
+			// Scene Objects /* 0009-D */
 			if (true)
 			{
 				// PointLights
@@ -3934,7 +3942,8 @@ int main()
 				}
 			}
 
-			// Pipeline
+
+			// Pipeline /* 0008-D */
 			{
 				// Lit
 				{
@@ -3969,7 +3978,7 @@ int main()
 			}
 
 
-			// DescriptorSet
+			// DescriptorSet /* 0011-D */
 			{
 				// Lit
 				{
@@ -3980,7 +3989,7 @@ int main()
 			}
 
 
-			// Framebuffers
+			// Framebuffers /** 0007-D /
 			{
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
@@ -3991,7 +4000,7 @@ int main()
 			}
 
 
-			// RenderPass
+			// RenderPass /* 0006-D */
 			{
 				vkDestroyRenderPass(device, renderPass, nullptr);
 				SA_LOG(L"Destroy RenderPass success.", Info, VK, renderPass);
@@ -3999,7 +4008,7 @@ int main()
 			}
 
 
-			// Scene Resources
+			// Scene Resources /* 0005-D */
 			{
 				// Depth Texture
 				{
@@ -4027,7 +4036,7 @@ int main()
 			}
 
 
-			// Commands
+			// Commands /* 0004-D */
 			{
 				// CmdBuffers
 				{
@@ -4053,7 +4062,7 @@ int main()
 			}
 
 
-			// Swapchain
+			// Swapchain /* 0003-D */
 			{
 				// Synchronization
 				{
@@ -4100,7 +4109,7 @@ int main()
 			}
 
 
-			// Device
+			// Device /* 0002-D */
 			{
 				SA_LOG(L"Destroy Graphics Queue success", Info, VK, graphicsQueue);
 				graphicsQueue = VK_NULL_HANDLE;
@@ -4120,7 +4129,7 @@ int main()
 			}
 
 
-			// Surface
+			// Surface /* 0003-0-D */
 			{
 				vkDestroySurfaceKHR(instance, windowSurface, nullptr);
 				SA_LOG(L"Destroy Window Surface success", Info, VK, windowSurface);
@@ -4128,7 +4137,7 @@ int main()
 			}
 
 
-			// Instance
+			// Instance /* 0001-D */
 			{
 #if SA_DEBUG
 				auto destroyDebugFunc = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");

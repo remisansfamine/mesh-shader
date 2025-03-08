@@ -143,7 +143,7 @@ void ValidationLayersDebugCallback(D3D12_MESSAGE_CATEGORY _category,
 #endif
 
 
-// === Factory ===
+// === Factory === /* 0001 */
 
 /**
 * Header specific to create a Factory (required to create a Device).
@@ -153,7 +153,7 @@ void ValidationLayersDebugCallback(D3D12_MESSAGE_CATEGORY _category,
 MComPtr<IDXGIFactory6> factory; // VkInstance -> IDXGIFactory
 
 
-// === Device ===
+// === Device === /* 0002 */
 
 // Don't need to keep Adapter (physical Device) reference: only use Logical.
 MComPtr<ID3D12Device> device; // VkDevice -> ID3D12Device
@@ -185,7 +185,7 @@ void WaitDeviceIdle()
 }
 
 
-// === Swapchain ===
+// === Swapchain === /* 0003 */
 
 constexpr uint32_t bufferingCount = 3;
 
@@ -194,6 +194,7 @@ std::array<MComPtr<ID3D12Resource>, bufferingCount> swapchainImages{ nullptr }; 
 uint32_t swapchainFrameIndex = 0u;
 
 /**
+* 0003.1
 * Vulkan uses Semaphores and Fences for swapchain synchronization
 * 1 Fence and 1 Semaphore are used PER FRAME.
 *
@@ -207,7 +208,7 @@ MComPtr<ID3D12Fence> swapchainFence; // VkFence -> ID3D12Fence
 std::array<uint32_t, bufferingCount> swapchainFenceValues{ 0u };
 
 
-// === Commands ===
+// === Commands === /* 0004 */
 /**
 * Vulkan needs only 1 CommandPool for all frames + 1 CommandBuffer per frame. Recording commands are allocated and stored in the CommandBuffer.
 * DirectX12 doesn't have CommandPool, and split the CommandBuffer into "Allocator" (1 per frame) and CommandList (current list of allocated command for the frame, that can be directly reused: 1 for all frame).
@@ -222,22 +223,22 @@ std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 MComPtr<ID3D12GraphicsCommandList1> cmdList;
 
 
-// === Scene Textures ===
+// === Scene Textures === /* 0005 */
 
 // = Color =
 constexpr DXGI_FORMAT sceneColorFormat = DXGI_FORMAT_R8G8B8A8_UNORM; // VkFormat -> DXGI_FORMAT
 constexpr float sceneClearColor[] = { 0.0f, 0.1f, 0.2f, 1.0f };
 // Use Swapchain backbuffer texture as color output.
-MComPtr<ID3D12DescriptorHeap> sceneRTViewHeap;
+MComPtr<ID3D12DescriptorHeap> sceneRTViewHeap; /* 0006-1 */
 
 // = Depth =
 constexpr DXGI_FORMAT sceneDepthFormat = DXGI_FORMAT_D16_UNORM; // VkFormat -> DXGI_FORMAT
 constexpr D3D12_CLEAR_VALUE sceneDepthClearValue{ .Format = sceneDepthFormat, .DepthStencil = { 1.0f, 0 } };
 MComPtr<ID3D12Resource> sceneDepthTexture; // VkImage -> ID3D12Resource
-MComPtr<ID3D12DescriptorHeap> sceneDepthRTViewHeap;
+MComPtr<ID3D12DescriptorHeap> sceneDepthRTViewHeap; /* 0006-2 */
 
 
-// === Pipeline ===
+// === Pipeline === /* 0008 */
 
 // = Viewport & Scissor =
 /**
@@ -258,11 +259,11 @@ D3D12_RECT scissorRect{}; // VkRect2D -> D3D12_RECT
 MComPtr<ID3DBlob> litVertexShader; // VkShaderModule -> ID3DBlob
 MComPtr<ID3DBlob> litPixelShader;
 
-MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSignature
+MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSignature /* 0008-1 */
 MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineState
 
 
-// === Scene Objects ===
+// === Scene Objects === /* 0009 */
 
 MComPtr<ID3D12DescriptorHeap> pbrSphereSRVHeap;
 
@@ -303,7 +304,7 @@ constexpr uint32_t pointLightNum = 2;
 MComPtr<ID3D12Resource> pointLightBuffer;
 
 
-// === Resources ===
+// === Resources === /* 0010 */
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -612,13 +613,13 @@ int main()
 
 		// Renderer
 		{
-			// Factory
+			// Factory /* 0001-I */
 			if (true)
 			{
 				UINT dxgiFactoryFlags = 0;
 
 #if SA_DEBUG
-				// Validation Layers
+				// Validation Layers /* 0001-I2 */
 				{
 					MComPtr<ID3D12Debug1> debugController = nullptr;
 
@@ -635,7 +636,7 @@ int main()
 				}
 
 				// Enable additional debug layers.
-				dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+				dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG; /* 0001-I1 */
 #endif
 				
 				const HRESULT hrFactoryCreated = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&factory));
@@ -651,7 +652,7 @@ int main()
 			}
 
 
-			// Device
+			// Device /* 0002-I */
 			if (true)
 			{
 				// Don't need to keep reference after creating logical device.
@@ -680,7 +681,7 @@ int main()
 				}
 
 #if SA_DEBUG
-				// Validation Layers
+				// Validation Layers /* 0002-1 */
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
 
@@ -705,7 +706,7 @@ int main()
 				}
 #endif
 
-				// Queue
+				// Queue /* 0002-I2 */
 				{
 					// This example renderer only uses 1 graphics queue.
 
@@ -737,7 +738,7 @@ int main()
 				}
 
 
-				// Synchronization
+				// Synchronization /* 0002-I3 */
 				{
 					deviceFenceEvent = CreateEvent(nullptr, false, false, nullptr);
 					if (!deviceFenceEvent)
@@ -767,7 +768,7 @@ int main()
 			}
 
 
-			// Swapchain
+			// Swapchain /* 0003-I */
 			if (true)
 			{
 				const DXGI_SWAP_CHAIN_DESC1 desc{
@@ -804,7 +805,26 @@ int main()
 				}
 
 
-				// Synchronization
+				// Query back-buffers /* 0003-I1 */
+				for (uint32_t i = 0; i < bufferingCount; ++i)
+				{
+					const HRESULT hrSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
+					if (hrSwapChainGetBuffer)
+					{
+						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrSwapChainGetBuffer));
+						return EXIT_FAILURE;
+					}
+					else
+					{
+						const std::wstring name = L"SwapchainBackBuffer [" + std::to_wstring(i) + L"]";
+						swapchainImages[i]->SetName(name.data());
+
+						SA_LOG((L"Get Swapchain Buffer [%1] success.", i), Info, DX12, (L"\"%1\" [%2]", name, swapchainImages[i].Get()));
+					}
+				}
+
+
+				// Synchronization /* 0003.1-I */
 				{
 					swapchainFenceEvent = CreateEvent(nullptr, false, false, nullptr);
 					if (!swapchainFenceEvent)
@@ -827,31 +847,13 @@ int main()
 						SA_LOG(L"Create Swapchain Fence success.", Info, DX12, (L"\"%1\" [%2]", name, swapchainFence.Get()));
 					}
 				}
-
-				// Query back-buffers
-				for (uint32_t i = 0; i < bufferingCount; ++i)
-				{
-					const HRESULT hrSwapChainGetBuffer = swapchain->GetBuffer(i, IID_PPV_ARGS(&swapchainImages[i]));
-					if (hrSwapChainGetBuffer)
-					{
-						SA_LOG((L"Get Swapchain Buffer [%1] failed!", i), Error, DX12, (L"Error Code: %1", hrSwapChainGetBuffer));
-						return EXIT_FAILURE;
-					}
-					else
-					{
-						const std::wstring name = L"SwapchainBackBuffer [" + std::to_wstring(i) + L"]";
-						swapchainImages[i]->SetName(name.data());
-
-						SA_LOG((L"Get Swapchain Buffer [%1] success.", i), Info, DX12, (L"\"%1\" [%2]", name, swapchainImages[i].Get()));
-					}
-				}
 			}
 
 
-			// Commands
+			// Commands /* 0004-I */
 			if (true)
 			{
-				// Allocators
+				// Allocators  /* 0004-I2-1 */
 				for (uint32_t i = 0; i < bufferingCount; ++i)
 				{
 					auto& cmdAlloc = cmdAllocs[i];
@@ -871,7 +873,7 @@ int main()
 					}
 				}
 
-				// List
+				// List /* 0004-I2-2 */
 				{
 					const HRESULT hrCmdListCreated = device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAllocs[0].Get(), nullptr, IID_PPV_ARGS(&cmdList));
 					if (FAILED(hrCmdListCreated))
@@ -893,10 +895,10 @@ int main()
 			}
 
 
-			// Scene Textures
+			// Scene Textures /* 0005-I */
 			if (true)
 			{
-				// Color RT View Heap
+				// Color RT View Heap /* 0006-I1 */
 				{
 					/**
 					* Create a Render Target typed heap to allocate views.
@@ -935,7 +937,7 @@ int main()
 				}
 
 
-				// Depth Scene Texture
+				// Depth Scene Texture /* 0005-I1 */
 				{
 					const D3D12_RESOURCE_DESC desc{
 						.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D,
@@ -976,7 +978,7 @@ int main()
 					}
 				}
 
-				// Depth Scene RT View Heap
+				// Depth Scene RT View Heap /* 0006-I2 */
 				{
 					/**
 					* Create a 'Depth' typed heap to allocate views.
@@ -1010,7 +1012,7 @@ int main()
 			}
 
 
-			// Pipeline
+			// Pipeline /* 0008-I */
 			if (true)
 			{
 				// Viewport & Scissor
@@ -1041,7 +1043,7 @@ int main()
 
 				// Lit
 				{
-					// RootSignature
+					// RootSignature /* 0008-1-I */
 					{
 						/**
 						* Root signature is the Pipeline Layout.
@@ -1202,6 +1204,7 @@ int main()
 
 
 					// Vertex Shader
+					if (true)
 					{
 						MComPtr<ID3DBlob> errors;
 
@@ -1419,7 +1422,7 @@ int main()
 			cmdList->Reset(cmdAllocs[0].Get(), nullptr);
 
 
-			// Scene Objects
+			// Scene Objects /* 0009-I */
 			if (true)
 			{
 				// PBR Sphere SRV View Heap
@@ -1587,7 +1590,7 @@ int main()
 						return EXIT_FAILURE;
 					}
 
-					// Create View
+					// Create View /* 0011-I-1 */
 					{
 						D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
 							.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
@@ -1605,7 +1608,7 @@ int main()
 			}
 
 
-			// Resources
+			// Resources /* 0010-I */
 			if (true)
 			{
 				Assimp::Importer importer;
@@ -1890,6 +1893,7 @@ int main()
 				}
 
 				// Textures
+				if (true)
 				{
 					stbi_set_flip_vertically_on_load(true);
 
@@ -1968,7 +1972,7 @@ int main()
 							stbi_image_free(inData);
 
 
-							// Create View
+							// Create View /* 0011-I-2 */
 							{
 								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
 									.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -2054,7 +2058,7 @@ int main()
 							stbi_image_free(inData);
 
 
-							// Create View
+							// Create View /* 0011-I-3 */
 							{
 								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
 									.Format = DXGI_FORMAT_R8G8B8A8_UNORM,
@@ -2139,7 +2143,7 @@ int main()
 							stbi_image_free(inData);
 
 
-							// Create View
+							// Create View /* 0011-I-4 */
 							{
 								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
 									.Format = DXGI_FORMAT_R8_UNORM,
@@ -2224,7 +2228,7 @@ int main()
 							stbi_image_free(inData);
 
 
-							// Create View
+							// Create View /* 0011-I-5 */
 							{
 								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
 									.Format = DXGI_FORMAT_R8_UNORM,
@@ -2322,7 +2326,7 @@ int main()
 
 			// Render
 			{
-				// Swapchain Begin
+				// Swapchain Begin  /* 0003-U1 */
 				{
 					const UINT32 prevFenceValue = swapchainFenceValues[swapchainFrameIndex];
 
@@ -2370,7 +2374,7 @@ int main()
 				}
 
 
-				// Register Commands
+				// Register Commands /* 0004-U */
 				{
 					auto cmdAlloc = cmdAllocs[swapchainFrameIndex];
 					auto cmd = cmdList;
@@ -2381,6 +2385,8 @@ int main()
 					auto sceneColorRT = swapchainImages[swapchainFrameIndex];
 
 					/**
+					* 0006-U0
+					*
 					* Manage Render Targets for render:
 					* Vulkan uses vkRenderPass and vkFramebuffers to describe in advance how the render targets should be managed through passes and subpasses.
 					* DirectX12 doesn't have such system and must manage RenderTargets manually.
@@ -2401,7 +2407,7 @@ int main()
 						cmd->ResourceBarrier(1, &barrier);
 
 
-						// Clear
+						// Bind & Clear /* 0006-U1 */
 						{
 							// Access current frame allocated view.
 							D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = sceneRTViewHeap->GetCPUDescriptorHandleForHeapStart();
@@ -2425,6 +2431,7 @@ int main()
 					// Lit Pipeline
 					{
 						/**
+						* 0011-U-1
 						* Bind heaps.
 						* /!\ Only one heaps of each type can be bound!
 						*/
@@ -2433,6 +2440,7 @@ int main()
 
 
 						/**
+						* 0011-U-2
 						* DirectX12 doesn't have DescriptorSet: manually bind each entry of the RootSignature.
 						*/
 						cmd->SetGraphicsRootSignature(litRootSign.Get());
@@ -2454,6 +2462,7 @@ int main()
 						gpuHandle.ptr += srvOffset;
 
 
+						/* 0008-U */
 						cmd->SetPipelineState(litPipelineState.Get());
 
 						// Draw Sphere
@@ -2464,7 +2473,7 @@ int main()
 					}
 
 
-					// Manage RenderTargets for present.
+					// Manage RenderTargets for present. 0006-U2
 					{
 						// Color Transition to Present.
 						const D3D12_RESOURCE_BARRIER barrier{
@@ -2490,7 +2499,8 @@ int main()
 				}
 
 
-				// Swapchain End
+				// Swapchain End /* 0003-U2 */
+				if (true)
 				{
 					// Automatically present using internal present Queue if possible.
 					const HRESULT hrPresent = swapchain->Present(1, 0);
@@ -2525,7 +2535,7 @@ int main()
 			WaitDeviceIdle();
 
 
-			// Resources
+			// Resources /* 0010-D */
 			{
 				// Textures
 				{
@@ -2574,7 +2584,7 @@ int main()
 			}
 
 
-			// Scene Objects
+			// Scene Objects /* 0009-D */
 			{
 				// Camera Buffer
 				{
@@ -2605,7 +2615,7 @@ int main()
 			}
 
 
-			// Pipeline
+			// Pipeline /* 0008-D */
 			{
 				// Lit
 				{
@@ -2636,7 +2646,7 @@ int main()
 			}
 
 
-			// Scene Resources
+			// Scene Resources /* 0005-D - 0006-D */
 			{
 				SA_LOG(L"Destroying Scene Color RT ViewHeap...", Info, DX12, sceneRTViewHeap.Get());
 				sceneRTViewHeap = nullptr;
@@ -2649,7 +2659,7 @@ int main()
 			}
 
 
-			// Commands
+			// Commands /* 0004-D */
 			{
 				SA_LOG(L"Destroying Command List...", Info, DX12, cmdList.Get());
 				cmdList = nullptr;
@@ -2662,7 +2672,7 @@ int main()
 			}
 
 
-			// Swapchain
+			// Swapchain /* 0003-D */
 			{
 				// Synchronization
 				{
@@ -2685,7 +2695,7 @@ int main()
 			}
 
 
-			// Device
+			// Device /* 0002-D */
 			{
 				// Synchronization
 				{
@@ -2726,7 +2736,7 @@ int main()
 			}
 
 
-			// Factory
+			// Factory /* 0001-D */
 			{
 				SA_LOG(L"Destroying Factory...", Info, DX12, factory.Get());
 				factory = nullptr;
