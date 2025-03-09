@@ -44,6 +44,7 @@ target_compile_options(FVTDX12_mainVK PRIVATE /W4 /WX)
 find_package(Vulkan REQUIRED COMPONENTS shaderc_combined) # https://cmake.org/cmake/help/latest/module/FindVulkan.html
 target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan Vulkan::shaderc_combined)
 target_link_libraries(FVTDX12_mainVK PUBLIC glfw assimp stb SA_Logger SA_Maths)
+target_link_options(FVTDX12_mainVK PUBLIC "/ignore:4099") # shaderc_combined doesn't provide .pdb files in debug: remove linker warning.
 
 add_custom_command(
     TARGET FVTDX12_mainVK
