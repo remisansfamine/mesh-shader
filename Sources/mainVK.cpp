@@ -802,7 +802,7 @@ int main()
 				};
 
 #if SA_DEBUG
-				// Validation Layers /* 0001-I1 */
+				// Validation Layers (instance-level) /* 0001-I1 */
 				// Check Validation Layers Support
 				{
 					// Query currently supported layers.
@@ -869,7 +869,7 @@ int main()
 				}
 
 #if SA_DEBUG
-				// Validation Layers /* 0001-I2 */
+				// Validation Layers (instance-level) /* 0001-I2 */
 				{
 					auto createDebugFunc = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
 					if (createDebugFunc)

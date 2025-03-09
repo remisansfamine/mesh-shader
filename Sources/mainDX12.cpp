@@ -619,19 +619,43 @@ int main()
 				UINT dxgiFactoryFlags = 0;
 
 #if SA_DEBUG
-				// Validation Layers /* 0001-I2 */
+				// Validation Layers (instance-level) /* 0001-I2 */
 				{
-					MComPtr<ID3D12Debug1> debugController = nullptr;
+					// Debug controller
+					{
+						MComPtr<ID3D12Debug1> debugController = nullptr;
 
-					const HRESULT hrDebugInterface = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
-					if (SUCCEEDED(hrDebugInterface))
-					{
-						debugController->EnableDebugLayer();
-						debugController->SetEnableGPUBasedValidation(true);
+						const HRESULT hrDebugInterface = D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
+						if (SUCCEEDED(hrDebugInterface))
+						{
+							debugController->EnableDebugLayer();
+							debugController->SetEnableGPUBasedValidation(true);
+						}
+						else
+						{
+							SA_LOG(L"Validation layer DebugController initialization failed.", Error, DX12, (L"Error Code: %1", hrDebugInterface));
+						}
 					}
-					else
+
+					// Report live objects
 					{
-						SA_LOG(L"Validation layer initialization failed.", Error, DX12, (L"Error Code: %1", hrDebugInterface));
+						MComPtr<IDXGIInfoQueue> dxgiInfoQueue = nullptr;
+
+						const HRESULT hrDebugInterface = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiInfoQueue));
+						if (SUCCEEDED(hrDebugInterface))
+						{
+							/**
+							* Enable this to trigger breakpoints on ReportLiveObjects() and have errors in VisualStudio's output window.
+							* WARNING: ReportLiveObjects() will ONLY output in VisualStudio's output window and not exe CONSOLE.
+							*/
+							dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_CORRUPTION, true);
+							dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_ERROR, true);
+							dxgiInfoQueue->SetBreakOnSeverity(DXGI_DEBUG_ALL, DXGI_INFO_QUEUE_MESSAGE_SEVERITY_WARNING, true);
+						}
+						else
+						{
+							SA_LOG(L"Validation layer DebugInfoQueue uninitialized failed.", Error, DX12);
+						}
 					}
 				}
 
@@ -681,7 +705,7 @@ int main()
 				}
 
 #if SA_DEBUG
-				// Validation Layers /* 0002-1 */
+				// Validation Layers (device-level) /* 0002-1 */
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
 
@@ -2717,7 +2741,7 @@ int main()
 				}
 
 #if SA_DEBUG
-				// Validation Layers
+				// Validation Layers (device-level)
 				if (VLayerCallbackCookie)
 				{
 					MComPtr<ID3D12InfoQueue1> infoQueue = nullptr;
@@ -2748,7 +2772,7 @@ int main()
 				const HRESULT hrDebugInterface = DXGIGetDebugInterface1(0, IID_PPV_ARGS(&dxgiDebug));
 				if (SUCCEEDED(hrDebugInterface))
 				{
-					dxgiDebug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_FLAGS(DXGI_DEBUG_RLO_ALL | DXGI_DEBUG_RLO_IGNORE_INTERNAL));
+					dxgiDebug->ReportLiveObjects(DXGI_DEBUG_ALL, DXGI_DEBUG_RLO_ALL);
 				}
 				else
 				{
