@@ -22,7 +22,12 @@ In order to link and compile the Vulkan example, the Vulkan SDK is required.\
 ![VkSDK_install](Doc/Pictures/VulkanSDKInstall.png)
 
 ### DirectX12
-Windows already pack all the required DirectX12 library, no SDK installation is required.
+The DirectX12 libraries are **already packed with the Windows OS**, therefore, **no SDK installation** is required in order to use DirectX12.\
+However, to access the **latest DirectX12 features**, the **Agility SDK** can be installed into the project to override the .dlls from the OS.\
+For this project, the Agility SDK **615** is automatically downloaded and installed to make sure everyone has access to **Mesh Shaders**. The Agility SDK also provide additional includes such as:
+```cpp
+#include <d3dx12/d3dx12.h>
+```
 
 
 ## Initialization

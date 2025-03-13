@@ -13,6 +13,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}/libs")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}/libs")
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}")
 
+set(MY_PACKAGE_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/ThirdParty/packages")
 
 
 # ===== Target mainDX12 =====
@@ -24,11 +25,14 @@ execute_process(
     COMMAND ./Cmd/nuget install Microsoft.Direct3D.D3D12 -Version 1.615.1 -OutputDirectory "${CMAKE_SOURCE_DIR}/ThirdParty/packages"
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 )
-set(AGILITY_SDK_OUT_DIR "${CMAKE_SOURCE_DIR}/ThirdParty/packages/Microsoft.Direct3D.D3D12.1.615.1/build/native/bin/x64/")
+set(MY_AGILITY_SDK_INCLUDE_DIR "${MY_PACKAGE_OUTPUT_DIR}/Microsoft.Direct3D.D3D12.1.615.1/build/native/include")
+set(MY_AGILITY_SDK_BIN_OUTPUT_DIR "${MY_PACKAGE_OUTPUT_DIR}/Microsoft.Direct3D.D3D12.1.615.1/build/native/bin/x64")
 
 target_compile_features(FVTDX12_mainDX12 PRIVATE c_std_11 cxx_std_20)
 target_compile_options(FVTDX12_mainDX12 PRIVATE /W4 /WX)
 
+# Force Agility SDK 615
+target_include_directories(FVTDX12_mainDX12 PRIVATE ${MY_AGILITY_SDK_INCLUDE_DIR})
 target_compile_definitions(FVTDX12_mainDX12 PRIVATE FORCE_AGILITY_SDK_615=1)
 
 target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
@@ -47,7 +51,7 @@ add_custom_command(
     TARGET FVTDX12_mainDX12
     POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${AGILITY_SDK_OUT_DIR}
+    ${MY_AGILITY_SDK_BIN_OUTPUT_DIR}
     $<TARGET_FILE_DIR:FVTDX12_mainDX12>/D3D12
 )
 
