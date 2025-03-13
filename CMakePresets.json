@@ -7,7 +7,7 @@
 			"description": "MSVC Compiler",
 			"generator": "Visual Studio 17 2022",
 			"architecture": "x64",
-			"binaryDir": "${sourceDir}/build/${presetName}",
+			"binaryDir": "${sourceDir}/Build/${presetName}",
 			"cacheVariables":
 			{
 				"CMAKE_INSTALL_PREFIX": "${sourceDir}/install/${presetName}"

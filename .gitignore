@@ -22,6 +22,7 @@ Makefile
 [Tt]emp/
 [Tt]emps/
 [Tt]emporary/
+[Pp]ackages/
 
 *.tmp
 

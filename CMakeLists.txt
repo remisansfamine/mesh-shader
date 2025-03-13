@@ -18,8 +18,18 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${MY_BIN_OUTPUT_DIR}")
 # ===== Target mainDX12 =====
 add_executable(FVTDX12_mainDX12 "Sources/mainDX12.cpp")
 
+# Install Agility SDK 1.615.1 to nake sure everyone has Mesh-shader ready D3D12 dll
+# See Agility SDK documentation: https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/
+execute_process(
+    COMMAND ./Cmd/nuget install Microsoft.Direct3D.D3D12 -Version 1.615.1 -OutputDirectory "${CMAKE_SOURCE_DIR}/ThirdParty/packages"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set(AGILITY_SDK_OUT_DIR "${CMAKE_SOURCE_DIR}/ThirdParty/packages/Microsoft.Direct3D.D3D12.1.615.1/build/native/bin/x64/")
+
 target_compile_features(FVTDX12_mainDX12 PRIVATE c_std_11 cxx_std_20)
 target_compile_options(FVTDX12_mainDX12 PRIVATE /W4 /WX)
+
+target_compile_definitions(FVTDX12_mainDX12 PRIVATE FORCE_AGILITY_SDK_615=1)
 
 target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
 target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
@@ -32,27 +42,41 @@ add_custom_command(
     $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources
 )
 
+# Copy Agility SDK bin to output directory
+add_custom_command(
+    TARGET FVTDX12_mainDX12
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${AGILITY_SDK_OUT_DIR}
+    $<TARGET_FILE_DIR:FVTDX12_mainDX12>/D3D12
+)
+
 
 
 # ===== Target mainVK =====
-add_executable(FVTDX12_mainVK "Sources/mainVK.cpp")
+find_package(Vulkan COMPONENTS shaderc_combined) # https://cmake.org/cmake/help/latest/module/FindVulkan.html
 
-target_compile_features(FVTDX12_mainVK PRIVATE c_std_11 cxx_std_20)
-target_compile_options(FVTDX12_mainVK PRIVATE /W4 /WX)
+if(${Vulkan_FOUND})
+    add_executable(FVTDX12_mainVK "Sources/mainVK.cpp")
+
+    target_compile_features(FVTDX12_mainVK PRIVATE c_std_11 cxx_std_20)
+    target_compile_options(FVTDX12_mainVK PRIVATE /W4 /WX)
 
 
-find_package(Vulkan REQUIRED COMPONENTS shaderc_combined) # https://cmake.org/cmake/help/latest/module/FindVulkan.html
-target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan Vulkan::shaderc_combined)
-target_link_libraries(FVTDX12_mainVK PUBLIC glfw assimp stb SA_Logger SA_Maths)
-target_link_options(FVTDX12_mainVK PUBLIC "/ignore:4099") # shaderc_combined doesn't provide .pdb files in debug: remove linker warning.
+    target_link_libraries(FVTDX12_mainVK PUBLIC Vulkan::Vulkan Vulkan::shaderc_combined)
+    target_link_libraries(FVTDX12_mainVK PUBLIC glfw assimp stb SA_Logger SA_Maths)
+    target_link_options(FVTDX12_mainVK PUBLIC "/ignore:4099") # shaderc_combined doesn't provide .pdb files in debug: remove linker warning.
 
-add_custom_command(
-    TARGET FVTDX12_mainVK
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/Resources
-    $<TARGET_FILE_DIR:FVTDX12_mainVK>/Resources
-)
+    add_custom_command(
+        TARGET FVTDX12_mainVK
+        POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+        ${CMAKE_SOURCE_DIR}/Resources
+        $<TARGET_FILE_DIR:FVTDX12_mainVK>/Resources
+    )
+else()
+    message(WARNING "WARNING: Vulkan SDK not found: can't compile mainVK.cpp.")
+endif()
 
 
 

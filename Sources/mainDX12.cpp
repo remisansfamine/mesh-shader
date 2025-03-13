@@ -50,6 +50,13 @@ using MComPtr = Microsoft::WRL::ComPtr<T>;
 * Base DirectX12 header.
 * Requires `d3d12.lib`
 */
+#if FORCE_AGILITY_SDK_615
+/**
+* Force the Agility SDK 615 for Mesh Shader ready d3d12 lib.
+*/
+extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 615; }
+extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\"; }
+#endif
 #include <d3d12.h> // vulkan.h -> d3d12.h
 
 /**
