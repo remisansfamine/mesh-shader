@@ -13,7 +13,12 @@
 #include <SA/Collections/Maths>
 #include <SA/Collections/Transform>
 
+#define USE_MESHSHADER
 
+#ifdef USE_MESHSHADER
+#define USE_DEVICE2
+#define USE_COMMANDLIST6
+#endif
 
 // ========== Windowing ==========
 
@@ -58,6 +63,7 @@ extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = 615; }
 extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\"; }
 #endif
 #include <d3d12.h> // vulkan.h -> d3d12.h
+#include <directx/d3dx12.h>
 
 /**
 * DX12 additionnal Debug tools:
@@ -163,7 +169,11 @@ MComPtr<IDXGIFactory6> factory; // VkInstance -> IDXGIFactory
 // === Device === /* 0002 */
 
 // Don't need to keep Adapter (physical Device) reference: only use Logical.
+#ifdef USE_DEVICE2
+MComPtr<ID3D12Device2> device; // VkDevice -> ID3D12Device
+#else
 MComPtr<ID3D12Device> device; // VkDevice -> ID3D12Device
+#endif
 
 MComPtr<ID3D12CommandQueue> graphicsQueue; // VkQueue -> ID3D12CommandQueue
 // No PresentQueue needed (already handleled by Swapchain).
@@ -227,7 +237,11 @@ std::array<MComPtr<ID3D12CommandAllocator>, bufferingCount> cmdAllocs;
 * /!\ with DirectX12, for graphics operations, the 'CommandList' type is not enough. ID3D12GraphicsCommandList must be used.
 * Like for Vulkan, we allocate 1 command buffer per frame.
 */
+#ifdef USE_COMMANDLIST6
+MComPtr<ID3D12GraphicsCommandList6> cmdList;
+#else
 MComPtr<ID3D12GraphicsCommandList1> cmdList;
+#endif
 
 
 // === Scene Textures === /* 0005 */
@@ -265,6 +279,7 @@ D3D12_RECT scissorRect{}; // VkRect2D -> D3D12_RECT
 
 MComPtr<ID3DBlob> litVertexShader; // VkShaderModule -> ID3DBlob
 MComPtr<ID3DBlob> litPixelShader;
+MComPtr<ID3DBlob> litMeshShader;
 
 MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSignature /* 0008-1 */
 MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineState
@@ -1273,6 +1288,24 @@ int main()
 						}
 					}
 
+					// Fragment Shader
+					{
+						MComPtr<ID3DBlob> errors;
+
+						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainMS", "ms_5_0", shaderCompileFlags, 0, &litMeshShader, &errors);
+
+						if (FAILED(hrCompileShader))
+						{
+							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+							SA_LOG(L"Shader {LitShader.hlsl, mainMS} compilation failed.", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Shader {LitShader.hlsl, mainMS} compilation success.", Info, DX12, litMeshShader.Get());
+						}
+					}
 
 					// PipelineState
 					{
@@ -1390,7 +1423,61 @@ int main()
 							.NumElements = _countof(inputElems)
 						};
 
+#ifdef USE_MESHSHADER
+						const D3DX12_MESH_SHADER_PIPELINE_STATE_DESC desc{
+							.pRootSignature = litRootSign.Get(),
 
+							.MS{
+								litMeshShader->GetBufferPointer(),
+								litMeshShader->GetBufferSize()
+							},
+							.PS{
+								litPixelShader->GetBufferPointer(),
+								litPixelShader->GetBufferSize()
+							},
+
+							.BlendState = blendState,
+							.SampleMask = UINT_MAX,
+
+							.RasterizerState = raster,
+
+							.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
+
+							.NumRenderTargets = 1,
+							.RTVFormats{
+								sceneColorFormat
+							},
+							.DSVFormat = sceneDepthFormat,
+
+							.SampleDesc
+							{
+								.Count = 1,
+								.Quality = 0,
+							},
+
+							.NodeMask = 0,
+
+							.CachedPSO
+							{
+								.pCachedBlob = nullptr,
+								.CachedBlobSizeInBytes = 0,
+							},
+
+							.Flags = D3D12_PIPELINE_STATE_FLAG_NONE,
+						};
+
+						const D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{ sizeof(desc), (void*)(&desc) };
+						const HRESULT hrCreatePipeline = device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&litPipelineState));
+						if (FAILED(hrCreatePipeline))
+						{
+							SA_LOG(L"Create Lit PipelineState failed!", Error, DX12, (L"Error Code: %1", hrCreatePipeline));
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Create Lit PipelineState success.", Info, DX12, litPipelineState.Get());
+						}
+#else
 						const D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{
 							.pRootSignature = litRootSign.Get(),
 
@@ -1445,6 +1532,7 @@ int main()
 						{
 							SA_LOG(L"Create Lit PipelineState success.", Info, DX12, litPipelineState.Get());
 						}
+#endif
 					}
 				}
 			}
@@ -2496,11 +2584,16 @@ int main()
 						/* 0008-U */
 						cmd->SetPipelineState(litPipelineState.Get());
 
+						constexpr int meshletCount = 10;
+#ifdef USE_MESHSHADER
+						cmd->DispatchMesh(meshletCount, 1, 1);
+#elif
 						// Draw Sphere
 						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 						cmd->IASetVertexBuffers(0, static_cast<UINT>(sphereVertexBufferViews.size()), sphereVertexBufferViews.data());
 						cmd->IASetIndexBuffer(&sphereIndexBufferView);
 						cmd->DrawIndexedInstanced(sphereIndexCount, 1, 0, 0, 0);
+#endif
 					}
 
 
@@ -2666,6 +2759,12 @@ int main()
 					{
 						SA_LOG(L"Destroying Lit Vertex Shader...", Info, DX12, litVertexShader.Get());
 						litVertexShader = nullptr;
+					}
+
+					// Vertex Shader
+					{
+						SA_LOG(L"Destroying Lit Vertex Shader...", Info, DX12, litMeshShader.Get());
+						litMeshShader = nullptr;
 					}
 
 					// RootSignature
