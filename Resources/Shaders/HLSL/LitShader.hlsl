@@ -86,7 +86,21 @@ VertexOutput mainVS(VertexFactory _input)
 	return output;
 }
 
+//-------------------- Mesh Shader --------------------
 
+struct Meshlet
+{
+
+};
+
+StructuredBuffer<Meshlet> meshlets : register(t0);
+
+[numthreads(1, 1, 1)]
+[outputtopology("triangle")]
+void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, out vertices VertexOutput outVertices[MaxVertexCount], out indices uint3 outTriangles[MaxTriangleCount])
+{
+
+}
 
 //-------------------- Pixel Shader --------------------
 

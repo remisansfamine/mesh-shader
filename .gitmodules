@@ -4,6 +4,9 @@
 [submodule "ThirdParty/assimp"]
 	path = ThirdParty/assimp
 	url = https://github.com/assimp/assimp
+[submodule "ThirdParty/DirectX-Headers"]
+	path = ThirdParty/DirectX-Headers
+	url = https://github.com/microsoft/DirectX-Headers.git
 [submodule "ThirdParty/SA/Logger"]
 	path = ThirdParty/SA/Logger
 	url = https://github.com/SapphireSuite/Logger.git

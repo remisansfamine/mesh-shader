@@ -22,7 +22,7 @@ target_compile_features(FVTDX12_mainDX12 PRIVATE c_std_11 cxx_std_20)
 target_compile_options(FVTDX12_mainDX12 PRIVATE /W4 /WX)
 
 target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
-target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths)
+target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths DirectX-Headers)
 
 add_custom_command(
     TARGET FVTDX12_mainDX12
@@ -66,6 +66,7 @@ add_subdirectory(ThirdParty/assimp)
 
 add_subdirectory(ThirdParty/stb)
 
+add_subdirectory(ThirdParty/DirectX-Headers)
 
 ## SA libraries
 add_subdirectory(ThirdParty/SA/Logger)
