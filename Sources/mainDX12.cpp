@@ -1161,7 +1161,43 @@ int main()
 								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							},
 						};
+#ifdef USE_MESHSHADER
+						const D3D12_DESCRIPTOR_RANGE1 meshletSRVRange{
+							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+							.NumDescriptors = 1,
+							.BaseShaderRegister = 5,
+							.RegisterSpace = 0,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						};
 
+						const D3D12_DESCRIPTOR_RANGE1 meshletVerticesSRVRange{
+							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+							.NumDescriptors = 1,
+							.BaseShaderRegister = 6,
+							.RegisterSpace = 0,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						};
+
+						const D3D12_DESCRIPTOR_RANGE1 meshletTrianglesSRVRange{
+							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+							.NumDescriptors = 1,
+							.BaseShaderRegister = 7,
+							.RegisterSpace = 0,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						};
+
+						const D3D12_DESCRIPTOR_RANGE1 verticesSRVRange{
+							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+							.NumDescriptors = 1,
+							.BaseShaderRegister = 8,
+							.RegisterSpace = 0,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						};
+#endif
 						const D3D12_ROOT_PARAMETER1 params[]{
 							// Camera Constant buffer
 							{
@@ -1171,7 +1207,11 @@ int main()
 									.RegisterSpace = 0,
 									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE,
 								},
+#ifndef USE_MESHSHADER
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
+#else
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+#endif
 							},
 							// Object Constant buffer
 							{
@@ -1181,7 +1221,11 @@ int main()
 									.RegisterSpace = 0,
 									.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE,
 								},
+#ifndef USE_MESHSHADER
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
+#else
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+#endif
 							},
 							// Point Lights Structured buffer
 							{
@@ -1204,7 +1248,45 @@ int main()
 									.pDescriptorRanges = pbrTextureRange
 								},
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
-							}
+							},
+#ifdef USE_MESHSHADER
+							// Meshlet Structured buffers
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = 1,
+									.pDescriptorRanges = &meshletSRVRange
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+							},
+							// Meshlet Vertices Structured buffers
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = 1,
+									.pDescriptorRanges = &meshletVerticesSRVRange
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+							},
+							// Meshlet Triangles Structured buffers
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = 1,
+									.pDescriptorRanges = &meshletTrianglesSRVRange
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+							},
+							// Vertices Structured buffers
+							{
+								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
+								.DescriptorTable {
+									.NumDescriptorRanges = 1,
+									.pDescriptorRanges = &verticesSRVRange
+								},
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+							},
+#endif
 						};
 
 						const D3D12_STATIC_SAMPLER_DESC sampler{
@@ -1778,10 +1860,13 @@ int main()
 						}
 
 #ifdef USE_MESHSHADER
+						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSphereSRVHeap->GetCPUDescriptorHandleForHeapStart();
+						cpuHandle.ptr += srvOffset * 3u; // Add offset because first slot it for PointLightsBuffer and PBR textures.
+
 						const size_t maxVertices = 64u;
 						const size_t maxTriangles = 124u;
 						const float coneWeight = 0.f;
-						
 						
 						size_t maxMeshlets = meshopt_buildMeshletsBound(indices.size(), maxVertices, maxTriangles);
 						std::vector<meshopt_Meshlet> meshlets(maxMeshlets);
@@ -1830,6 +1915,21 @@ int main()
 								SA_LOG(L"Sphere Meshlet Buffer submit failed!", Error, DX12);
 								return EXIT_FAILURE;
 							}
+
+							// Create View /* 0011-I-6 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(meshlets.size()),
+										.StructureByteStride = sizeof(meshopt_Meshlet),
+									},
+								};
+								device->CreateShaderResourceView(meshletBuffer.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
+							}
 						}
 
 						// Meshlet Vertices
@@ -1871,6 +1971,21 @@ int main()
 								SA_LOG(L"Sphere Meshlet Vertices Buffer submit failed!", Error, DX12);
 								return EXIT_FAILURE;
 							}
+
+							// Create View /* 0011-I-7 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(meshletVertices.size()),
+										.StructureByteStride = sizeof(unsigned int),
+									},
+								};
+								device->CreateShaderResourceView(meshletVerticesBuffer.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
+							}
 						}
 
 						// Meshlet Triangles Vertices
@@ -1911,6 +2026,21 @@ int main()
 							{
 								SA_LOG(L"Sphere Meshlet Triangles Buffer submit failed!", Error, DX12);
 								return EXIT_FAILURE;
+							}
+
+							// Create View /* 0011-I-8 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(meshletTriangles.size()),
+										.StructureByteStride = sizeof(unsigned char),
+									},
+								};
+								device->CreateShaderResourceView(meshletTrianglesBuffer.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
 							}
 						}
 #endif
@@ -1966,6 +2096,22 @@ int main()
 								SA_LOG(L"Sphere Vertex Position Buffer submit failed!", Error, DX12);
 								return EXIT_FAILURE;
 							}
+#ifdef USE_MESHSHADER
+							// Create View /* 0011-I-1 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(inMesh->mNumVertices),
+										.StructureByteStride = sizeof(SA::Vec3f),
+									},
+								};
+								device->CreateShaderResourceView(sphereVertexBuffers[0].Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
+							}
+#endif
 						}
 
 #ifndef USE_MESHSHADER
@@ -2741,6 +2887,17 @@ int main()
 						/* 0008-U */
 						cmd->SetPipelineState(litPipelineState.Get());
 #ifdef USE_MESHSHADER
+						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets
+						gpuHandle.ptr += srvOffset;
+
+						cmd->SetGraphicsRootDescriptorTable(5, gpuHandle); // Meshlet vertices
+						gpuHandle.ptr += srvOffset;
+
+						cmd->SetGraphicsRootDescriptorTable(6, gpuHandle); // Meshlet triangles
+						gpuHandle.ptr += srvOffset;
+
+						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
+						gpuHandle.ptr += srvOffset;
 
 						cmd->DispatchMesh(static_cast<UINT>(meshletCount), 1u, 1u);
 #elif
