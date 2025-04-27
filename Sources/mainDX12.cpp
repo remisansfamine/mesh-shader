@@ -598,6 +598,10 @@ std::array<MComPtr<ID3D12Resource>, 4> sphereVertexBuffers; // VkBuffer -> ID3D1
 std::array<D3D12_VERTEX_BUFFER_VIEW, 4> sphereVertexBufferViews;
 #ifdef USE_MESHSHADER
 size_t meshletCount = 0u;
+MComPtr<ID3D12Resource> meshletBuffer; // VkBuffer -> ID3D12Resource
+MComPtr<ID3D12Resource> meshletVerticesBuffer; // VkBuffer -> ID3D12Resource
+MComPtr<ID3D12Resource> meshletTrianglesBuffer; // VkBuffer -> ID3D12Resource
+
 #endif
 uint32_t sphereIndexCount = 0u;
 MComPtr<ID3D12Resource> sphereIndexBuffer;
@@ -1762,7 +1766,6 @@ int main()
 
 						const aiMesh* inMesh = scene->mMeshes[0];
 
-#ifdef USE_MESHSHADER
 						std::vector<uint16_t> indices;
 						sphereIndexCount = inMesh->mNumFaces * 3;
 						indices.resize(sphereIndexCount);
@@ -1774,6 +1777,7 @@ int main()
 							indices[i * 3 + 2] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[2]);
 						}
 
+#ifdef USE_MESHSHADER
 						const size_t maxVertices = 64u;
 						const size_t maxTriangles = 124u;
 						const float coneWeight = 0.f;
@@ -1786,7 +1790,130 @@ int main()
 
 						meshletCount = meshopt_buildMeshlets(meshlets.data(), meshletVertices.data(), meshletTriangles.data(), indices.data(),
 							indices.size(), &inMesh->mVertices[0].x, inMesh->mNumVertices, sizeof(aiVector3D), maxVertices, maxTriangles, coneWeight);
-#else
+
+						// Meshlet
+						{
+							const D3D12_HEAP_PROPERTIES heap{
+								.Type = D3D12_HEAP_TYPE_DEFAULT, // Type Default is GPU only.
+							};
+
+							const D3D12_RESOURCE_DESC desc{
+								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+								.Alignment = 0,
+								.Width = sizeof(meshopt_Meshlet) * meshlets.size(),
+								.Height = 1,
+								.DepthOrArraySize = 1,
+								.MipLevels = 1,
+								.Format = DXGI_FORMAT_UNKNOWN,
+								.SampleDesc = {.Count = 1, .Quality = 0 },
+								.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+								.Flags = D3D12_RESOURCE_FLAG_NONE,
+							};
+
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&meshletBuffer));
+							if (FAILED(hrBufferCreated))
+							{
+								SA_LOG(L"Create Meshlet Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								const LPCWSTR name = L"MeshletBuffer";
+								meshletBuffer->SetName(name);
+
+								SA_LOG(L"Create Meshlet Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, meshletBuffer.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitBufferToGPU(meshletBuffer, desc.Width, meshlets.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Meshlet Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// Meshlet Vertices
+						{
+							const D3D12_HEAP_PROPERTIES heap{
+								.Type = D3D12_HEAP_TYPE_DEFAULT, // Type Default is GPU only.
+							};
+
+							const D3D12_RESOURCE_DESC desc{
+								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+								.Alignment = 0,
+								.Width = sizeof(unsigned int) * meshletVertices.size(),
+								.Height = 1,
+								.DepthOrArraySize = 1,
+								.MipLevels = 1,
+								.Format = DXGI_FORMAT_UNKNOWN,
+								.SampleDesc = {.Count = 1, .Quality = 0 },
+								.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+								.Flags = D3D12_RESOURCE_FLAG_NONE,
+							};
+
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&meshletVerticesBuffer));
+							if (FAILED(hrBufferCreated))
+							{
+								SA_LOG(L"Create Meshlet Vertices Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								const LPCWSTR name = L"MeshletVerticesBuffer";
+								meshletVerticesBuffer->SetName(name);
+
+								SA_LOG(L"Create Meshlet Vertices Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, meshletVerticesBuffer.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitBufferToGPU(meshletVerticesBuffer, desc.Width, meshletVertices.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Meshlet Vertices Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
+						}
+
+						// Meshlet Triangles Vertices
+						{
+							const D3D12_HEAP_PROPERTIES heap{
+								.Type = D3D12_HEAP_TYPE_DEFAULT, // Type Default is GPU only.
+							};
+
+							const D3D12_RESOURCE_DESC desc{
+								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+								.Alignment = 0,
+								.Width = sizeof(unsigned char) * meshletTriangles.size(),
+								.Height = 1,
+								.DepthOrArraySize = 1,
+								.MipLevels = 1,
+								.Format = DXGI_FORMAT_UNKNOWN,
+								.SampleDesc = {.Count = 1, .Quality = 0 },
+								.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+								.Flags = D3D12_RESOURCE_FLAG_NONE,
+							};
+
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&meshletTrianglesBuffer));
+							if (FAILED(hrBufferCreated))
+							{
+								SA_LOG(L"Create Meshlet Triangles Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								const LPCWSTR name = L"MeshletTrianglesBuffer";
+								meshletTrianglesBuffer->SetName(name);
+
+								SA_LOG(L"Create Meshlet Triangles Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, meshletTrianglesBuffer.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitBufferToGPU(meshletTrianglesBuffer, desc.Width, meshletTriangles.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Meshlet Triangles Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
+						}
+#endif
 						// Position
 						{
 							/**
@@ -1841,6 +1968,7 @@ int main()
 							}
 						}
 
+#ifndef USE_MESHSHADER
 						// Normal
 						{
 							const D3D12_HEAP_PROPERTIES heap{
@@ -1989,6 +2117,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 						}
+#endif
 
 						// Index
 						{
@@ -2029,19 +2158,6 @@ int main()
 								.Format = DXGI_FORMAT_R16_UINT, // This model's indices are lower than 65535.
 							};
 
-
-							// Pack indices into uint16_t since max index < 65535.
-							std::vector<uint16_t> indices;
-							indices.resize(inMesh->mNumFaces * 3);
-							sphereIndexCount = inMesh->mNumFaces * 3;
-
-							for (unsigned int i = 0; i < inMesh->mNumFaces; ++i)
-							{
-								indices[i * 3] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[0]);
-								indices[i * 3 + 1] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[1]);
-								indices[i * 3 + 2] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[2]);
-							}
-
 							const bool bSubmitSuccess = SubmitBufferToGPU(sphereIndexBuffer, desc.Width, indices.data(), D3D12_RESOURCE_STATE_INDEX_BUFFER);
 							if (!bSubmitSuccess)
 							{
@@ -2049,7 +2165,6 @@ int main()
 								return EXIT_FAILURE;
 							}
 						}
-#endif
 					}
 				}
 
@@ -2765,6 +2880,20 @@ int main()
 					SA_LOG(L"Destroying Sphere Object Buffer...", Info, DX12, sphereObjectBuffer.Get());
 					sphereObjectBuffer = nullptr;
 				}
+
+#ifdef USE_MESHSHADER
+				// Meshlet Buffers
+				{
+					SA_LOG(L"Destroying Meshlet Buffers...", Info, DX12, meshletBuffer.Get());
+					meshletBuffer = nullptr;
+
+					SA_LOG(L"Destroying Meshlet Vertices Buffers...", Info, DX12, meshletVerticesBuffer.Get());
+					meshletVerticesBuffer = nullptr;
+
+					SA_LOG(L"Destroying Meshlet Triangles Buffers...", Info, DX12, meshletTrianglesBuffer.Get());
+					meshletTrianglesBuffer = nullptr;
+				}
+#endif
 
 				// PointLights Buffer
 				{

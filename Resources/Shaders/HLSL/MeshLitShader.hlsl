@@ -66,10 +66,16 @@ cbuffer ObjectBuffer : register(b1)
 
 struct Meshlet
 {
-	float3 position;
+	uint vertexOffset;
+	uint triangleOffset;
+	uint vertexCount;
+	uint triangleCount;
 };
 
-StructuredBuffer<Meshlet> meshlets : register(t0);
+StructuredBuffer<VertexFactory>  vertices : register(t0); // positionBuffer
+StructuredBuffer<Meshlet>        meshlets : register(t1); // meshletBuffer
+StructuredBuffer<uint>      vertexIndices : register(t2); // meshletVerticesBuffer
+StructuredBuffer<uint>    triangleIndices : register(t3); // meshletTrianglesBuffer
 
 [numthreads(1, 1, 1)]
 [outputtopology("triangle")]
