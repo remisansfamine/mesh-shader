@@ -72,6 +72,10 @@ extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\
 */
 #include <DXGIDebug.h>
 
+#ifdef USE_MESHSHADER
+	#include <meshoptimizer.h>
+#endif
+
 // === Validation Layers ===
 
 #if SA_DEBUG
@@ -592,6 +596,9 @@ std::array<MComPtr<ID3D12Resource>, 4> sphereVertexBuffers; // VkBuffer -> ID3D1
 * DirectX12 create 'views' (aka. how to read the memory) of buffers and use them for binding.
 */
 std::array<D3D12_VERTEX_BUFFER_VIEW, 4> sphereVertexBufferViews;
+#ifdef USE_MESHSHADER
+size_t meshletCount = 0u;
+#endif
 uint32_t sphereIndexCount = 0u;
 MComPtr<ID3D12Resource> sphereIndexBuffer;
 D3D12_INDEX_BUFFER_VIEW sphereIndexBufferView;
@@ -725,6 +732,19 @@ int main()
 
 					SA_LOG(L"Create Device success.", Info, DX12, (L"\"%1\" [%2]", name, device.Get()));
 				}
+
+#ifdef USE_MESHSHADER
+				D3D12_FEATURE_DATA_D3D12_OPTIONS7 options7 = {};
+				const HRESULT hrFeatureSupport = device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS7, &options7, sizeof(options7));
+
+				const bool isMeshShadingSupported = (options7.MeshShaderTier >= D3D12_MESH_SHADER_TIER_1);
+				if (FAILED(hrFeatureSupport) || !isMeshShadingSupported)
+				{
+					SA_LOG(L"Required mesh shading tier not supported", Error, DX12, (L"Error Code: %1", hrFeatureSupport));
+
+					return EXIT_FAILURE;
+				}
+#endif
 
 #if SA_DEBUG
 				// Validation Layers (device-level) /* 0002-1 */
@@ -1288,7 +1308,7 @@ int main()
 						}
 					}
 
-					// Fragment Shader
+					// Mesh Shader
 					{
 						MComPtr<ID3DBlob> errors;
 
@@ -1746,6 +1766,31 @@ int main()
 
 						const aiMesh* inMesh = scene->mMeshes[0];
 
+#ifdef USE_MESHSHADER
+						std::vector<uint16_t> indices;
+						sphereIndexCount = inMesh->mNumFaces * 3;
+						indices.resize(sphereIndexCount);
+
+						for (unsigned int i = 0; i < inMesh->mNumFaces; ++i)
+						{
+							indices[i * 3] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[0]);
+							indices[i * 3 + 1] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[1]);
+							indices[i * 3 + 2] = static_cast<uint16_t>(inMesh->mFaces[i].mIndices[2]);
+						}
+
+						const size_t maxVertices = 64u;
+						const size_t maxTriangles = 124u;
+						const float coneWeight = 0.f;
+						
+						
+						size_t maxMeshlets = meshopt_buildMeshletsBound(indices.size(), maxVertices, maxTriangles);
+						std::vector<meshopt_Meshlet> meshlets(maxMeshlets);
+						std::vector<unsigned int> meshletVertices(maxMeshlets * maxVertices);
+						std::vector<unsigned char> meshletTriangles(maxMeshlets * maxTriangles * 3u);
+
+						meshletCount = meshopt_buildMeshlets(meshlets.data(), meshletVertices.data(), meshletTriangles.data(), indices.data(),
+							indices.size(), &inMesh->mVertices[0].x, inMesh->mNumVertices, sizeof(aiVector3D), maxVertices, maxTriangles, coneWeight);
+#else
 						// Position
 						{
 							/**
@@ -2008,6 +2053,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 						}
+#endif
 					}
 				}
 
@@ -2583,10 +2629,9 @@ int main()
 
 						/* 0008-U */
 						cmd->SetPipelineState(litPipelineState.Get());
-
-						constexpr int meshletCount = 10;
 #ifdef USE_MESHSHADER
-						cmd->DispatchMesh(meshletCount, 1, 1);
+
+						cmd->DispatchMesh(static_cast<UINT>(meshletCount), 1u, 1u);
 #elif
 						// Draw Sphere
 						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);

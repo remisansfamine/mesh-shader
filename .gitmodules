@@ -13,3 +13,6 @@
 [submodule "ThirdParty/SA/Maths"]
 	path = ThirdParty/SA/Maths
 	url = https://github.com/SapphireSuite/Maths.git
+[submodule "ThirdParty/meshoptimizer"]
+	path = ThirdParty/meshoptimizer
+	url = https://github.com/zeux/meshoptimizer.git

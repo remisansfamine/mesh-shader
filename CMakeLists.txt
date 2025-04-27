@@ -36,7 +36,7 @@ target_include_directories(FVTDX12_mainDX12 PRIVATE ${MY_AGILITY_SDK_INCLUDE_DIR
 target_compile_definitions(FVTDX12_mainDX12 PRIVATE FORCE_AGILITY_SDK_615=1)
 
 target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
-target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths DirectX-Headers)
+target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths DirectX-Headers meshoptimizer)
 
 add_custom_command(
     TARGET FVTDX12_mainDX12
@@ -95,6 +95,8 @@ add_subdirectory(ThirdParty/assimp)
 add_subdirectory(ThirdParty/stb)
 
 add_subdirectory(ThirdParty/DirectX-Headers)
+
+add_subdirectory(ThirdParty/meshoptimizer)
 
 ## SA libraries
 add_subdirectory(ThirdParty/SA/Logger)
