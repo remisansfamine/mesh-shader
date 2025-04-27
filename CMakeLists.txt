@@ -19,6 +19,52 @@ set(MY_PACKAGE_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/ThirdParty/packages")
 # ===== Target mainDX12 =====
 add_executable(FVTDX12_mainDX12 "Sources/mainDX12.cpp")
 
+# Build shaders
+set(SHADER_SOURCES
+	Shaders/HLSL/LitShader.hlsl
+	Shaders/HLSL/LitShader.hlsl
+	Shaders/HLSL/MeshLitShader.hlsl
+	Shaders/HLSL/MeshLitShader.hlsl
+)
+
+set(SHADER_TARGETS
+    vs_5_0
+    ps_5_0
+    ms_6_5
+    ps_5_0
+)
+
+set(SHADER_ENTRY_POINTS
+    mainVS
+    mainPS
+    mainMS
+    mainPS
+)
+
+set(SHADER_OUTPUTS
+	Shaders/HLSL/VSLitShader.cso
+	Shaders/HLSL/PSLitShader.cso
+	Shaders/HLSL/MSMeshLitShader.cso
+	Shaders/HLSL/PSMeshLitShader.cso
+)
+
+set(SHADER_OUTPUT_DIR $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources)
+add_custom_command(TARGET FVTDX12_mainDX12
+	POST_BUILD
+	COMMAND echo Compiling shader sources in ${SHADER_OUTPUT_DIR}...
+	COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_OUTPUT_DIR}
+)
+ 
+set(DXC_PATH "${CMAKE_SOURCE_DIR}/ThirdParty/dxc/bin/x64/dxc.exe")
+
+foreach(SHADER_SOURCE SHADER_TARGET SHADER_ENTRY_POINT SHADER_OUTPUT IN ZIP_LISTS SHADER_SOURCES SHADER_TARGETS SHADER_ENTRY_POINTS SHADER_OUTPUTS)
+	set(SHADER_FULL_OUTPUT $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources/${SHADER_OUTPUT})
+	add_custom_command(TARGET FVTDX12_mainDX12
+		POST_BUILD
+		COMMAND ${DXC_PATH} ${CMAKE_SOURCE_DIR}/Resources/${SHADER_SOURCE} -T ${SHADER_TARGET} -E ${SHADER_ENTRY_POINT} -Fo ${SHADER_FULL_OUTPUT}
+	)
+endforeach()
+
 # Install Agility SDK 1.615.1 to nake sure everyone has Mesh-shader ready D3D12 dll
 # See Agility SDK documentation: https://devblogs.microsoft.com/directx/gettingstarted-dx12agility/
 execute_process(

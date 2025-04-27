@@ -59,31 +59,34 @@ cbuffer ObjectBuffer : register(b1)
 	Object object;
 };
 
+//-------------------- Mesh Shader --------------------
 
-VertexOutput mainVS(VertexFactory _input)
+#define MAX_NUM_VERTS 252
+#define MAX_NUM_PRIMS (MAX_NUM_VERTS / 3)
+
+struct Meshlet
 {
-	VertexOutput output;
+	float3 position;
+};
 
-	//---------- Position ----------
-	const float4 worldPosition4 = mul(object.transform, float4(_input.position, 1.0));
-	output.worldPosition = worldPosition4.xyz / worldPosition4.w;
-	output.svPosition = mul(camera.invViewProj, worldPosition4);
-	output.viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);
+StructuredBuffer<Meshlet> meshlets : register(t0);
 
+[numthreads(1, 1, 1)]
+[outputtopology("triangle")]
+void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, out vertices VertexOutput outVertices[MAX_NUM_VERTS], out indices uint3 outTriangles[MAX_NUM_PRIMS])
+{
+	SetMeshOutputCounts(MAX_NUM_VERTS, MAX_NUM_PRIMS);
 
-	//---------- Normal ----------
-	const float3 normal = normalize(mul((float3x3)object.transform, _input.normal));
-	const float3 tangent = normalize(mul((float3x3)object.transform, _input.tangent));
-	const float3 bitangent = cross(normal, tangent);
+	for (int i = 0; i < MAX_NUM_VERTS; i++)
+	{
+		VertexOutput vertOutput;
+		outVertices[i] = vertOutput;
+	}
 
-	/// HLSL uses row-major constructor: transpose to get TBN matrix.
-	output.TBN = transpose(float3x3(tangent, bitangent, normal));
-
-
-	//---------- UV ----------
-	output.uv = _input.uv;
-
-	return output;
+	for (int i = 0; i < MAX_NUM_PRIMS; i++)
+	{
+		outTriangles[i] = uint3(0, 0, 0);
+	}
 }
 
 //-------------------- Pixel Shader --------------------
