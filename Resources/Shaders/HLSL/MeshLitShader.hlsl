@@ -72,10 +72,10 @@ struct Meshlet
 	uint triangleCount;
 };
 
-StructuredBuffer<VertexFactory>  vertices : register(t0); // positionBuffer
-StructuredBuffer<Meshlet>        meshlets : register(t1); // meshletBuffer
-StructuredBuffer<uint>      vertexIndices : register(t2); // meshletVerticesBuffer
-StructuredBuffer<uint>    triangleIndices : register(t3); // meshletTrianglesBuffer
+StructuredBuffer<Meshlet>        meshlets : register(t5); // meshletBuffer
+StructuredBuffer<uint>      vertexIndices : register(t6); // meshletVerticesBuffer
+StructuredBuffer<uint>    triangleIndices : register(t7); // meshletTrianglesBuffer
+StructuredBuffer<VertexFactory>  vertices : register(t8); // positionBuffer
 
 [numthreads(1, 1, 1)]
 [outputtopology("triangle")]
