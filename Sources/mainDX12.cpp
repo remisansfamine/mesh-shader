@@ -1100,13 +1100,6 @@ int main()
 					};
 				}
 
-#if SA_DEBUG
-				// Enable better shader debugging with the graphics debugging tools.
-				const UINT shaderCompileFlags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#else
-				const UINT shaderCompileFlags = D3DCOMPILE_PACK_MATRIX_ROW_MAJOR | D3DCOMPILE_OPTIMIZATION_LEVEL3;
-#endif
-
 				// Lit
 				{
 					// RootSignature /* 0008-1-I */
@@ -1268,62 +1261,65 @@ int main()
 						}
 					}
 
+#ifndef USE_MESHSHADER
+					LPCWSTR pixelShaderPath = L"Resources/Shaders/HLSL/PSLitShader.cso";
 
 					// Vertex Shader
-					if (true)
 					{
 						MComPtr<ID3DBlob> errors;
 
-						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainVS", "vs_5_0", shaderCompileFlags, 0, &litVertexShader, &errors);
+						const HRESULT hrCompileShader = D3DReadFileToBlob(L"Resources/Shaders/HLSL/VSLitShader.cso", &litShader);
 
 						if (FAILED(hrCompileShader))
 						{
 							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
-							SA_LOG(L"Shader {LitShader.hlsl, mainVS} compilation failed!", Error, DX12, errorStr);
+							SA_LOG(L"Shader {VSLitShader.cso, mainMS} compilation failed.", Error, DX12, errorStr);
 
 							return EXIT_FAILURE;
 						}
 						else
 						{
-							SA_LOG(L"Shader {LitShader.hlsl, mainVS} compilation success.", Info, DX12, litVertexShader.Get());
+							SA_LOG(L"Shader {VSLitShader.cso, mainMS} compilation success.", Info, DX12, litMeshShader.Get());
 						}
 					}
-
-					// Fragment Shader
-					{
-						MComPtr<ID3DBlob> errors;
-
-						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainPS", "ps_5_0", shaderCompileFlags, 0, &litPixelShader, &errors);
-
-						if (FAILED(hrCompileShader))
-						{
-							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
-							SA_LOG(L"Shader {LitShader.hlsl, mainPS} compilation failed.", Error, DX12, errorStr);
-
-							return EXIT_FAILURE;
-						}
-						else
-						{
-							SA_LOG(L"Shader {LitShader.hlsl, mainPS} compilation success.", Info, DX12, litPixelShader.Get());
-						}
-					}
+#else
+					LPCWSTR pixelShaderPath = L"Resources/Shaders/HLSL/PSMeshLitShader.cso";
 
 					// Mesh Shader
 					{
 						MComPtr<ID3DBlob> errors;
 
-						const HRESULT hrCompileShader = D3DCompileFromFile(L"Resources/Shaders/HLSL/LitShader.hlsl", nullptr, nullptr, "mainMS", "ms_5_0", shaderCompileFlags, 0, &litMeshShader, &errors);
+						const HRESULT hrCompileShader = D3DReadFileToBlob(L"Resources/Shaders/HLSL/MSMeshLitShader.cso", &litMeshShader);
 
 						if (FAILED(hrCompileShader))
 						{
 							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
-							SA_LOG(L"Shader {LitShader.hlsl, mainMS} compilation failed.", Error, DX12, errorStr);
+							SA_LOG(L"Shader {MSMeshLitShader.cso, mainVS} compilation failed!", Error, DX12, errorStr);
 
 							return EXIT_FAILURE;
 						}
 						else
 						{
-							SA_LOG(L"Shader {LitShader.hlsl, mainMS} compilation success.", Info, DX12, litMeshShader.Get());
+							SA_LOG(L"Shader {MSMeshLitShader.cso, mainVS} compilation success.", Info, DX12, litVertexShader.Get());
+						}
+					}
+#endif
+					// Fragment Shader
+					{
+						MComPtr<ID3DBlob> errors;
+
+						const HRESULT hrCompileShader = D3DReadFileToBlob(pixelShaderPath, &litPixelShader);
+
+						if (FAILED(hrCompileShader))
+						{
+							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+							SA_LOG(L"Shader {PSLitShader.cso, mainPS} compilation failed.", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Shader {PSLitShader.cso, mainPS} compilation success.", Info, DX12, litPixelShader.Get());
 						}
 					}
 

@@ -86,25 +86,6 @@ VertexOutput mainVS(VertexFactory _input)
 	return output;
 }
 
-//-------------------- Mesh Shader --------------------
-
-#define MAX_NUM_VERTS 252
-#define MAX_NUM_PRIMS (MAX_NUM_VERTS / 3)
-
-struct Meshlet
-{
-	float3 position;
-};
-
-StructuredBuffer<Meshlet> meshlets : register(t0);
-
-[numthreads(1, 1, 1)]
-[outputtopology("triangle")]
-void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, out vertices VertexOutput outVertices[MAX_NUM_VERTS], out indices uint3 outTriangles[MAX_NUM_PRIMS])
-{
-
-}
-
 //-------------------- Pixel Shader --------------------
 
 struct PixelInput : VertexOutput
