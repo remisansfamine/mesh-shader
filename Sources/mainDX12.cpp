@@ -1354,7 +1354,7 @@ int main()
 					{
 						MComPtr<ID3DBlob> errors;
 
-						const HRESULT hrCompileShader = D3DReadFileToBlob(L"Resources/Shaders/HLSL/VSLitShader.cso", &litShader);
+						const HRESULT hrCompileShader = D3DReadFileToBlob(L"Resources/Shaders/HLSL/VSLitShader.cso", &litVertexShader);
 
 						if (FAILED(hrCompileShader))
 						{
@@ -2900,7 +2900,7 @@ int main()
 						gpuHandle.ptr += srvOffset;
 
 						cmd->DispatchMesh(static_cast<UINT>(meshletCount), 1u, 1u);
-#elif
+#else
 						// Draw Sphere
 						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 						cmd->IASetVertexBuffers(0, static_cast<UINT>(sphereVertexBufferViews.size()), sphereVertexBufferViews.data());

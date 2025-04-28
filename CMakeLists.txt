@@ -19,6 +19,15 @@ set(MY_PACKAGE_OUTPUT_DIR "${CMAKE_SOURCE_DIR}/ThirdParty/packages")
 # ===== Target mainDX12 =====
 add_executable(FVTDX12_mainDX12 "Sources/mainDX12.cpp")
 
+add_custom_command(
+    TARGET FVTDX12_mainDX12
+    POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_SOURCE_DIR}/Resources
+    $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources
+)
+
+
 # Build shaders
 set(SHADER_SOURCES
 	Shaders/HLSL/LitShader.hlsl
@@ -83,14 +92,6 @@ target_compile_definitions(FVTDX12_mainDX12 PRIVATE FORCE_AGILITY_SDK_615=1)
 
 target_link_libraries(FVTDX12_mainDX12 PUBLIC d3d12.lib dxgi.lib dxguid.lib d3dcompiler.lib)
 target_link_libraries(FVTDX12_mainDX12 PUBLIC glfw assimp stb SA_Logger SA_Maths DirectX-Headers meshoptimizer)
-
-add_custom_command(
-    TARGET FVTDX12_mainDX12
-    POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_SOURCE_DIR}/Resources
-    $<TARGET_FILE_DIR:FVTDX12_mainDX12>/Resources
-)
 
 # Copy Agility SDK bin to output directory
 add_custom_command(
