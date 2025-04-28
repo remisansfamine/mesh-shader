@@ -1882,6 +1882,37 @@ int main()
 						meshletCount = meshopt_buildMeshlets(meshlets.data(), meshletVertices.data(), meshletTriangles.data(), indices.data(),
 							indices.size(), &inMesh->mVertices[0].x, inMesh->mNumVertices, sizeof(aiVector3D), maxVertices, maxTriangles, coneWeight);
 
+						auto& last = meshlets[meshletCount - 1];
+						meshletVertices.resize(last.vertex_offset + last.vertex_count);
+						meshletTriangles.resize(last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3));
+						meshlets.resize(meshletCount);
+
+						std::vector<uint32_t> meshletTrianglesU32;
+						for (meshopt_Meshlet& meshlet : meshlets)
+						{
+							// Save triangle offset for current meshlet
+							uint32_t triangleOffset = static_cast<uint32_t>(meshletTrianglesU32.size());
+
+							// Repack to uint32_t
+							for (uint32_t i = 0; i < meshlet.triangle_count; ++i)
+							{
+								uint32_t i0 = 3 * i + 0 + meshlet.triangle_offset;
+								uint32_t i1 = 3 * i + 1 + meshlet.triangle_offset;
+								uint32_t i2 = 3 * i + 2 + meshlet.triangle_offset;
+
+								uint8_t  vertIdx0 = meshletTriangles[i0];
+								uint8_t  vertIdx1 = meshletTriangles[i1];
+								uint8_t  vertIdx2 = meshletTriangles[i2];
+								uint32_t packedIdx = ((static_cast<uint32_t>(vertIdx0) & 0xFF) << 0) |
+									((static_cast<uint32_t>(vertIdx1) & 0xFF) << 8) |
+									((static_cast<uint32_t>(vertIdx2) & 0xFF) << 16);
+								meshletTrianglesU32.push_back(packedIdx);
+							}
+
+							// Update triangle offset for current meshlet
+							meshlet.triangle_offset = triangleOffset;
+						}
+
 						// Meshlet
 						{
 							const D3D12_HEAP_PROPERTIES heap{
@@ -2003,7 +2034,7 @@ int main()
 							const D3D12_RESOURCE_DESC desc{
 								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 								.Alignment = 0,
-								.Width = sizeof(unsigned char) * meshletTriangles.size(),
+								.Width = sizeof(unsigned int) * meshletTrianglesU32.size(),
 								.Height = 1,
 								.DepthOrArraySize = 1,
 								.MipLevels = 1,
@@ -2027,7 +2058,7 @@ int main()
 								SA_LOG(L"Create Meshlet Triangles Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, meshletTrianglesBuffer.Get()));
 							}
 
-							const bool bSubmitSuccess = SubmitBufferToGPU(meshletTrianglesBuffer, desc.Width, meshletTriangles.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(meshletTrianglesBuffer, desc.Width, meshletTrianglesU32.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"Sphere Meshlet Triangles Buffer submit failed!", Error, DX12);
@@ -2041,8 +2072,8 @@ int main()
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Buffer{
 										.FirstElement = 0,
-										.NumElements = static_cast<UINT>(meshletTriangles.size()),
-										.StructureByteStride = sizeof(unsigned char),
+										.NumElements = static_cast<UINT>(meshletTrianglesU32.size()),
+										.StructureByteStride = sizeof(unsigned int),
 									},
 								};
 								device->CreateShaderResourceView(meshletTrianglesBuffer.Get(), &viewDesc, cpuHandle);
