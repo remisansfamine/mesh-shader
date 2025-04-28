@@ -1656,7 +1656,11 @@ int main()
 
 					D3D12_DESCRIPTOR_HEAP_DESC desc{
 						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
+#ifdef USE_MESHSHADER
+						.NumDescriptors = 9,
+#else
 						.NumDescriptors = 5,
+#endif
 						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 					};
 
@@ -1864,7 +1868,7 @@ int main()
 #ifdef USE_MESHSHADER
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 						D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = pbrSphereSRVHeap->GetCPUDescriptorHandleForHeapStart();
-						cpuHandle.ptr += srvOffset * 3u; // Add offset because first slot it for PointLightsBuffer and PBR textures.
+						cpuHandle.ptr += srvOffset * 5u; // Add offset because first slot it for PointLightsBuffer (1) and PBR textures (4).
 
 						const size_t maxVertices = 64u;
 						const size_t maxTriangles = 124u;
@@ -2874,32 +2878,32 @@ int main()
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 						D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = pbrSphereSRVHeap->GetGPUDescriptorHandleForHeapStart();
 
+						cmd->SetPipelineState(litPipelineState.Get());
+
 						/**
 						* Use DescriptorTable with SRV type instead of direct SRV binding to create BufferView in SRV Heap.
 						* This allows use to correctly call pointLights.GetDimensions() in HLSL.
 						*/
 						//cmd->SetGraphicsRootShaderResourceView(2, pointLightBuffer->GetGPUVirtualAddress()); // PointLights
 						cmd->SetGraphicsRootDescriptorTable(2, gpuHandle); // PointLights
-						gpuHandle.ptr += srvOffset;
 
+						gpuHandle.ptr += srvOffset;
 						cmd->SetGraphicsRootDescriptorTable(3, gpuHandle); // PBR textures
-						gpuHandle.ptr += srvOffset;
-
 
 						/* 0008-U */
-						cmd->SetPipelineState(litPipelineState.Get());
+
 #ifdef USE_MESHSHADER
+						gpuHandle.ptr += srvOffset * 4u;
 						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets
-						gpuHandle.ptr += srvOffset;
 
+						gpuHandle.ptr += srvOffset;
 						cmd->SetGraphicsRootDescriptorTable(5, gpuHandle); // Meshlet vertices
-						gpuHandle.ptr += srvOffset;
 
+						gpuHandle.ptr += srvOffset;
 						cmd->SetGraphicsRootDescriptorTable(6, gpuHandle); // Meshlet triangles
-						gpuHandle.ptr += srvOffset;
 
-						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
 						gpuHandle.ptr += srvOffset;
+						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
 
 						cmd->DispatchMesh(static_cast<UINT>(meshletCount), 1u, 1u);
 #else
