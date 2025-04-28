@@ -13,6 +13,8 @@
 #include <SA/Collections/Maths>
 #include <SA/Collections/Transform>
 
+#define AS_GROUP_SIZE 32
+#define USE_AMPLIFICATIONSHADER
 #define USE_MESHSHADER
 
 #ifdef USE_MESHSHADER
@@ -283,7 +285,15 @@ D3D12_RECT scissorRect{}; // VkRect2D -> D3D12_RECT
 
 MComPtr<ID3DBlob> litVertexShader; // VkShaderModule -> ID3DBlob
 MComPtr<ID3DBlob> litPixelShader;
+
+
+#ifdef USE_MESHSHADER
+#ifdef USE_AMPLIFICATIONSHADER
+MComPtr<ID3DBlob> litAmplificationShader;
+#endif // USE_AMPLIFICATIONSHADER
+
 MComPtr<ID3DBlob> litMeshShader;
+#endif // USE_MESHSHADER
 
 MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSignature /* 0008-1 */
 MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineState
@@ -1167,7 +1177,7 @@ int main()
 							.NumDescriptors = 1,
 							.BaseShaderRegister = 5,
 							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
 							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 						};
 
@@ -1176,7 +1186,7 @@ int main()
 							.NumDescriptors = 1,
 							.BaseShaderRegister = 6,
 							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
 							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 						};
 
@@ -1185,7 +1195,7 @@ int main()
 							.NumDescriptors = 1,
 							.BaseShaderRegister = 7,
 							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
 							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 						};
 
@@ -1194,7 +1204,7 @@ int main()
 							.NumDescriptors = 1,
 							.BaseShaderRegister = 8,
 							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC,
+							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
 							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 						};
 #endif
@@ -1369,6 +1379,26 @@ int main()
 						}
 					}
 #else
+#ifdef USE_AMPLIFICATIONSHADER
+					// Amplification Shader
+					{
+						MComPtr<ID3DBlob> errors;
+
+						const HRESULT hrCompileShader = D3DReadFileToBlob(L"Resources/Shaders/HLSL/ASMeshLitShader.cso", &litAmplificationShader);
+
+						if (FAILED(hrCompileShader))
+						{
+							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
+							SA_LOG(L"Shader {ASMeshLitShader.cso, mainAS} compilation failed!", Error, DX12, errorStr);
+
+							return EXIT_FAILURE;
+						}
+						else
+						{
+							SA_LOG(L"Shader {ASMeshLitShader.cso, mainAS} compilation success.", Info, DX12, litAmplificationShader.Get());
+						}
+					}
+#endif // USE_AMPLIFICATIONSHADER
 					LPCWSTR pixelShaderPath = L"Resources/Shaders/HLSL/PSMeshLitShader.cso";
 
 					// Mesh Shader
@@ -1380,13 +1410,13 @@ int main()
 						if (FAILED(hrCompileShader))
 						{
 							std::string errorStr(static_cast<const char*>(errors->GetBufferPointer()), errors->GetBufferSize());
-							SA_LOG(L"Shader {MSMeshLitShader.cso, mainVS} compilation failed!", Error, DX12, errorStr);
+							SA_LOG(L"Shader {MSMeshLitShader.cso, mainMS} compilation failed!", Error, DX12, errorStr);
 
 							return EXIT_FAILURE;
 						}
 						else
 						{
-							SA_LOG(L"Shader {MSMeshLitShader.cso, mainVS} compilation success.", Info, DX12, litVertexShader.Get());
+							SA_LOG(L"Shader {MSMeshLitShader.cso, mainMS} compilation success.", Info, DX12, litMeshShader.Get());
 						}
 					}
 #endif
@@ -1529,6 +1559,12 @@ int main()
 						const D3DX12_MESH_SHADER_PIPELINE_STATE_DESC desc{
 							.pRootSignature = litRootSign.Get(),
 
+#ifdef USE_AMPLIFICATIONSHADER
+							.AS{
+								litAmplificationShader->GetBufferPointer(),
+								litAmplificationShader->GetBufferSize()
+							},
+#endif // USE_AMPLIFICATIONSHADER
 							.MS{
 								litMeshShader->GetBufferPointer(),
 								litMeshShader->GetBufferSize()
@@ -1581,7 +1617,7 @@ int main()
 						{
 							SA_LOG(L"Create Lit PipelineState success.", Info, DX12, litPipelineState.Get());
 						}
-#else
+#else // USE_MESHSHADER
 						const D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{
 							.pRootSignature = litRootSign.Get(),
 
@@ -1636,7 +1672,7 @@ int main()
 						{
 							SA_LOG(L"Create Lit PipelineState success.", Info, DX12, litPipelineState.Get());
 						}
-#endif
+#endif // USE_MESHSHADER
 					}
 				}
 			}
@@ -2936,14 +2972,20 @@ int main()
 						gpuHandle.ptr += srvOffset;
 						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
 
-						cmd->DispatchMesh(static_cast<UINT>(meshletCount), 1u, 1u);
-#else
+
+#ifdef USE_AMPLIFICATIONSHADER
+						const UINT threadGroupCountX = static_cast<UINT>((meshletCount / AS_GROUP_SIZE) + 1);
+#else // USE_AMPLIFICATIONSHADER
+						const UINT threadGroupCountX = static_cast<UINT>(meshletCount);
+#endif // USE_AMPLIFICATIONSHADER
+						cmd->DispatchMesh(threadGroupCountX, 1u, 1u);
+#else // USE_MESHSHADER
 						// Draw Sphere
 						cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 						cmd->IASetVertexBuffers(0, static_cast<UINT>(sphereVertexBufferViews.size()), sphereVertexBufferViews.data());
 						cmd->IASetIndexBuffer(&sphereIndexBufferView);
 						cmd->DrawIndexedInstanced(sphereIndexCount, 1, 0, 0, 0);
-#endif
+#endif // USE_MESHSHADER
 					}
 
 

@@ -1,3 +1,23 @@
+#define USE_AMPLIFICATIONSHADER
+
+//-------------------- Amplification Shader --------------------
+
+#define AS_GROUP_SIZE 32
+
+struct Payload
+{
+	uint meshletIndices[AS_GROUP_SIZE];
+};
+
+groupshared Payload sPayload;
+
+[numthreads(AS_GROUP_SIZE, 1, 1)]
+void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint gid : SV_GroupID)
+{
+	sPayload.meshletIndices[gtid] = dtid;
+	DispatchMesh(AS_GROUP_SIZE, 1, 1, sPayload);
+}
+
 //-------------------- Vertex Shader --------------------
 
 struct VertexFactory
@@ -81,9 +101,19 @@ StructuredBuffer<VertexFactory>  vertices : register(t8); // positionBuffer
 
 [numthreads(128, 1, 1)]
 [outputtopology("triangle")]
+#ifndef USE_AMPLIFICATIONSHADER
 void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, out vertices VertexOutput outVertices[MAX_NUM_VERTS], out indices uint3 outTriangles[MAX_NUM_PRIMS])
+#else 
+void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, in payload Payload payload, out vertices VertexOutput outVertices[MAX_NUM_VERTS], out indices uint3 outTriangles[MAX_NUM_PRIMS])
+#endif
 {
-	Meshlet meshlet = meshlets[gid];
+#ifndef USE_AMPLIFICATIONSHADER
+	uint meshletIndex = gid;
+#else
+	uint meshletIndex = payload.meshletIndices[gid];
+#endif
+	Meshlet meshlet = meshlets[meshletIndex];
+
 	SetMeshOutputCounts(meshlet.vertexCount, meshlet.triangleCount);
 
 	if (gtid < meshlet.triangleCount)

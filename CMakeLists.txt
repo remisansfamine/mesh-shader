@@ -34,11 +34,13 @@ set(SHADER_SOURCES
 	Shaders/HLSL/LitShader.hlsl
 	Shaders/HLSL/MeshLitShader.hlsl
 	Shaders/HLSL/MeshLitShader.hlsl
+	Shaders/HLSL/MeshLitShader.hlsl
 )
 
 set(SHADER_TARGETS
     vs_5_0
     ps_5_0
+    as_6_5
     ms_6_5
     ps_5_0
 )
@@ -46,6 +48,7 @@ set(SHADER_TARGETS
 set(SHADER_ENTRY_POINTS
     mainVS
     mainPS
+    mainAS
     mainMS
     mainPS
 )
@@ -53,6 +56,7 @@ set(SHADER_ENTRY_POINTS
 set(SHADER_OUTPUTS
 	Shaders/HLSL/VSLitShader.cso
 	Shaders/HLSL/PSLitShader.cso
+	Shaders/HLSL/ASMeshLitShader.cso
 	Shaders/HLSL/MSMeshLitShader.cso
 	Shaders/HLSL/PSMeshLitShader.cso
 )
