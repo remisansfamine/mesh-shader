@@ -4,11 +4,11 @@ struct VertexFactory
 {
 	float3 position : POSITION;
 
-	float3 normal : NORMAL;
+	//float3 normal : NORMAL;
 
-	float3 tangent : TANGENT;
+	//float3 tangent : TANGENT;
 
-	float2 uv : TEXCOORD;
+	//float2 uv : TEXCOORD;
 };
 
 
@@ -30,6 +30,8 @@ struct VertexOutput
 
 	/// Vertex UV
 	float2 uv : TEXCOORD;
+
+	float3 color : COLOR;
 };
 
 //---------- Bindings ----------
@@ -77,21 +79,46 @@ StructuredBuffer<uint>      vertexIndices : register(t6); // meshletVerticesBuff
 StructuredBuffer<uint>    triangleIndices : register(t7); // meshletTrianglesBuffer
 StructuredBuffer<VertexFactory>  vertices : register(t8); // positionBuffer
 
-[numthreads(1, 1, 1)]
+[numthreads(128, 1, 1)]
 [outputtopology("triangle")]
 void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, out vertices VertexOutput outVertices[MAX_NUM_VERTS], out indices uint3 outTriangles[MAX_NUM_PRIMS])
 {
-	SetMeshOutputCounts(MAX_NUM_VERTS, MAX_NUM_PRIMS);
+	Meshlet meshlet = meshlets[gid];
+	SetMeshOutputCounts(meshlet.vertexCount, meshlet.triangleCount);
 
-	for (int i = 0; i < MAX_NUM_VERTS; i++)
+	if (gtid < meshlet.triangleCount)
 	{
-		VertexOutput vertOutput;
-		outVertices[i] = vertOutput;
+		uint packedIdx = triangleIndices[meshlet.triangleOffset + gtid];
+		uint vertIdx0 = (packedIdx >> 0) & 0xFF;
+		uint vertIdx1 = (packedIdx >> 8) & 0xFF;
+		uint vertIdx2 = (packedIdx >> 16) & 0xFF;
+		outTriangles[gtid] = uint3(vertIdx0, vertIdx1, vertIdx2);
 	}
 
-	for (int i = 0; i < MAX_NUM_PRIMS; i++)
+	if (gtid < meshlet.vertexCount)
 	{
-		outTriangles[i] = uint3(0, 0, 0);
+		uint vertexIndex = meshlet.vertexOffset + gtid;
+		vertexIndex = vertexIndices[vertexIndex];
+
+		const float4 worldPosition4 = mul(object.transform, float4(vertices[vertexIndex].position, 1.0));
+		outVertices[gtid].worldPosition = worldPosition4.xyz / worldPosition4.w;
+		outVertices[gtid].svPosition = mul(camera.invViewProj, worldPosition4);
+		outVertices[gtid].viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);
+
+		float3 color = float3(float(gid & 1), float(gid & 3) / 4, float(gid & 7) / 8);
+		outVertices[gtid].color = color;
+
+		//---------- Normal ----------
+		const float3 normal = normalize(float3(1.0, 0.0, 0.0));
+		const float3 tangent = normalize(float3(0.0, 1.0, 0.0));
+		const float3 bitangent = normalize(float3(0.0, 0.0, 1.0));
+
+		/// HLSL uses row-major constructor: transpose to get TBN matrix.
+		outVertices[gtid].TBN = transpose(float3x3(tangent, bitangent, normal));
+
+
+		//---------- UV ----------
+		outVertices[gtid].uv = float2(0.0, 0.0);
 	}
 }
 
@@ -261,7 +288,7 @@ PixelOutput mainPS(PixelInput _input)
 		}
 	}
 
-	output.color = float4(finalColor, 1.0f);
+	output.color = float4(_input.color, 1.0f);
 
 	return output;
 }
