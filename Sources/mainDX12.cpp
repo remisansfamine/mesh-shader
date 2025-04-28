@@ -1568,7 +1568,9 @@ int main()
 							.Flags = D3D12_PIPELINE_STATE_FLAG_NONE,
 						};
 
-						const D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{ sizeof(desc), (void*)(&desc) };
+						CD3DX12_PIPELINE_MESH_STATE_STREAM psoStream(desc);
+
+						const D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{ sizeof(psoStream), (void*)(&psoStream) };
 						const HRESULT hrCreatePipeline = device->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&litPipelineState));
 						if (FAILED(hrCreatePipeline))
 						{
