@@ -1600,6 +1600,7 @@ int main()
 							.SampleMask = UINT_MAX,
 
 							.RasterizerState = raster,
+							.DepthStencilState = depthStencilState,
 
 							.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
 
