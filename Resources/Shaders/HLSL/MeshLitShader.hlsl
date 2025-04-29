@@ -1,5 +1,7 @@
+#define USE_MESHLET_ID_AS_VERTEX_COLOR
 #define USE_AMPLIFICATIONSHADER
 #define USE_INSTANCING
+#define DISPLAY_VERTEX_COLOR_ONLY
 
 //-------------------- Amplification Shader --------------------
 
@@ -71,11 +73,11 @@ struct VertexFactory
 {
 	float3 position : POSITION;
 
-	//float3 normal : NORMAL;
+	float3 normal : NORMAL;
 
-	//float3 tangent : TANGENT;
+	float3 tangent : TANGENT;
 
-	//float2 uv : TEXCOORD;
+	float2 uv : TEXCOORD;
 };
 
 
@@ -169,28 +171,33 @@ void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, in payload Payl
 
 	if (gtid < meshlet.vertexCount)
 	{
-		uint vertexIndex = meshlet.vertexOffset + gtid;
-		vertexIndex = vertexIndices[vertexIndex];
+		const uint vertexIndex = vertexIndices[meshlet.vertexOffset + gtid];
 
-		const float4 worldPosition4 = mul(currentObject.transform, float4(vertices[vertexIndex].position, 1.0));
+		const VertexFactory vertex = vertices[vertexIndex];
+
+		const float4 worldPosition4 = mul(currentObject.transform, float4(vertex.position, 1.0));
 		outVertices[gtid].worldPosition = worldPosition4.xyz / worldPosition4.w;
 		outVertices[gtid].svPosition = mul(camera.invViewProj, worldPosition4);
 		outVertices[gtid].viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);
 
-		float3 color = float3(float(gid & 1), float(gid & 3) / 4, float(gid & 7) / 8);
-		outVertices[gtid].color = color;
+#ifdef USE_MESHLET_ID_AS_VERTEX_COLOR
+		float3 meshletColor = float3(float(gid & 1), float(gid & 3) / 4, float(gid & 7) / 8);
+		outVertices[gtid].color = meshletColor;
+#else
+		outVertices[gtid].color = float3(1.0, 1.0, 1.0);
+#endif
 
 		//---------- Normal ----------
-		const float3 normal = normalize(float3(1.0, 0.0, 0.0));
-		const float3 tangent = normalize(float3(0.0, 1.0, 0.0));
-		const float3 bitangent = normalize(float3(0.0, 0.0, 1.0));
+		const float3 normal = normalize(vertex.normal);
+		const float3 tangent = normalize(vertex.tangent);
+		const float3 bitangent = cross(normal, tangent);
 
 		/// HLSL uses row-major constructor: transpose to get TBN matrix.
 		outVertices[gtid].TBN = transpose(float3x3(tangent, bitangent, normal));
 
 
 		//---------- UV ----------
-		outVertices[gtid].uv = float2(0.0, 0.0);
+		outVertices[gtid].uv = float2(vertex.uv);
 	}
 }
 
@@ -281,6 +288,11 @@ PixelOutput mainPS(PixelInput _input)
 {
 	PixelOutput output;
 
+#ifdef DISPLAY_VERTEX_COLOR_ONLY
+	output.color = float4(_input.color, 1.0);
+
+	return output;
+#endif
 
 	//---------- Base Color ----------
 	const float4 baseColor = albedo.Sample(pbrSampler, _input.uv);
@@ -360,7 +372,7 @@ PixelOutput mainPS(PixelInput _input)
 		}
 	}
 
-	output.color = float4(_input.color, 1.0f);
+	output.color = float4(finalColor, 1.0f);
 
 	return output;
 }

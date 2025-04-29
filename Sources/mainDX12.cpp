@@ -339,6 +339,15 @@ constexpr uint32_t numInstanceColsCount = 20u;
 constexpr uint32_t instanceCount = numInstanceRowsCount * numInstanceColsCount;
 #endif
 
+// = Vertex Buffer =
+struct Vertex
+{
+	SA::Vec3f position;
+	SA::Vec3f normal;
+	SA::Vec3f tangent;
+	SA::Vec2f uv;
+};
+
 // = Object Buffer =
 struct ObjectUBO
 {
@@ -1534,49 +1543,6 @@ int main()
 							}
 						};
 
-						D3D12_INPUT_ELEMENT_DESC inputElems[]{
-							{
-								.SemanticName = "POSITION",
-								.SemanticIndex = 0,
-								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
-									.InputSlot = 0,
-									.AlignedByteOffset = 0,
-									.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-									.InstanceDataStepRate = 0
-							},
-							{
-								.SemanticName = "NORMAL",
-								.SemanticIndex = 0,
-								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
-								.InputSlot = 1,
-								.AlignedByteOffset = 0,
-								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-								.InstanceDataStepRate = 0
-							},
-							{
-								.SemanticName = "TANGENT",
-								.SemanticIndex = 0,
-								.Format = DXGI_FORMAT_R32G32B32_FLOAT,
-								.InputSlot = 2,
-								.AlignedByteOffset = 0,
-								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-								.InstanceDataStepRate = 0
-							},
-							{
-								.SemanticName = "TEXCOORD",
-								.SemanticIndex = 0,
-								.Format = DXGI_FORMAT_R32G32_FLOAT,
-								.InputSlot = 3,
-								.AlignedByteOffset = 0,
-								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
-								.InstanceDataStepRate = 0
-							}
-						};
-						const D3D12_INPUT_LAYOUT_DESC inputLayout{
-							.pInputElementDescs = inputElems,
-							.NumElements = _countof(inputElems)
-						};
-
 #ifdef USE_MESHSHADER
 						const D3DX12_MESH_SHADER_PIPELINE_STATE_DESC desc{
 							.pRootSignature = litRootSign.Get(),
@@ -1641,6 +1607,49 @@ int main()
 							SA_LOG(L"Create Lit PipelineState success.", Info, DX12, litPipelineState.Get());
 						}
 #else // USE_MESHSHADER
+						D3D12_INPUT_ELEMENT_DESC inputElems[]{
+						{
+							.SemanticName = "POSITION",
+							.SemanticIndex = 0,
+							.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+								.InputSlot = 0,
+								.AlignedByteOffset = 0,
+								.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+								.InstanceDataStepRate = 0
+						},
+						{
+							.SemanticName = "NORMAL",
+							.SemanticIndex = 0,
+							.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+							.InputSlot = 1,
+							.AlignedByteOffset = 0,
+							.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+							.InstanceDataStepRate = 0
+						},
+						{
+							.SemanticName = "TANGENT",
+							.SemanticIndex = 0,
+							.Format = DXGI_FORMAT_R32G32B32_FLOAT,
+							.InputSlot = 2,
+							.AlignedByteOffset = 0,
+							.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+							.InstanceDataStepRate = 0
+						},
+						{
+							.SemanticName = "TEXCOORD",
+							.SemanticIndex = 0,
+							.Format = DXGI_FORMAT_R32G32_FLOAT,
+							.InputSlot = 3,
+							.AlignedByteOffset = 0,
+							.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA,
+							.InstanceDataStepRate = 0
+						}
+						};
+						const D3D12_INPUT_LAYOUT_DESC inputLayout{
+							.pInputElementDescs = inputElems,
+							.NumElements = _countof(inputElems)
+						};
+
 						const D3D12_GRAPHICS_PIPELINE_STATE_DESC desc{
 							.pRootSignature = litRootSign.Get(),
 
@@ -2162,7 +2171,81 @@ int main()
 								cpuHandle.ptr += srvOffset;
 							}
 						}
-#endif
+
+						// Vertex
+						{
+							const D3D12_HEAP_PROPERTIES heap{
+								.Type = D3D12_HEAP_TYPE_DEFAULT, // Type Default is GPU only.
+							};
+
+							const D3D12_RESOURCE_DESC desc{
+								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+								.Alignment = 0,
+								.Width = sizeof(Vertex) * inMesh->mNumVertices,
+								.Height = 1,
+								.DepthOrArraySize = 1,
+								.MipLevels = 1,
+								.Format = DXGI_FORMAT_UNKNOWN,
+								.SampleDesc = {.Count = 1, .Quality = 0 },
+								.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+								.Flags = D3D12_RESOURCE_FLAG_NONE,
+							};
+
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereVertexBuffers[0]));
+							if (FAILED(hrBufferCreated))
+							{
+								SA_LOG(L"Create Vertex Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								const LPCWSTR name = L"VertexBuffer";
+								sphereVertexBuffers[0]->SetName(name);
+
+								SA_LOG(L"Create Vertex Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, sphereVertexBuffers[0].Get()));
+							}
+
+							std::vector<Vertex> verices;
+							verices.reserve(inMesh->mNumVertices);
+
+							for (uint32_t i = 0; i < inMesh->mNumVertices; ++i)
+							{
+								const aiVector3D& inPosition = inMesh->mVertices[i];
+								const aiVector3D& inNormal = inMesh->mNormals[i];
+								const aiVector3D& inTangent = inMesh->mTangents[i];
+								const aiVector3D& inTexCoords = inMesh->mTextureCoords[0][i];
+
+								Vertex vert;
+								vert.position = SA::Vec3f(inPosition.x, inPosition.y, inPosition.z);
+								vert.normal = SA::Vec3f(inNormal.x, inNormal.y, inNormal.z);
+								vert.tangent = SA::Vec3f(inTangent.x, inTangent.y, inTangent.z);
+								vert.uv = SA::Vec2f(inTexCoords.x, inTexCoords.y);
+								verices.push_back(vert);
+							}
+
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[0], desc.Width, verices.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Position submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
+
+							// Create View /* 0011-I-8 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(verices.size()),
+										.StructureByteStride = sizeof(Vertex),
+									},
+								};
+								device->CreateShaderResourceView(sphereVertexBuffers[0].Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
+							}
+						}
+#else
 						// Position
 						{
 							/**
@@ -2215,25 +2298,8 @@ int main()
 								SA_LOG(L"Sphere Vertex Position Buffer submit failed!", Error, DX12);
 								return EXIT_FAILURE;
 							}
-#ifdef USE_MESHSHADER
-							// Create View /* 0011-I-1 */
-							{
-								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
-									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
-									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
-									.Buffer{
-										.FirstElement = 0,
-										.NumElements = static_cast<UINT>(inMesh->mNumVertices),
-										.StructureByteStride = sizeof(SA::Vec3f),
-									},
-								};
-								device->CreateShaderResourceView(sphereVertexBuffers[0].Get(), &viewDesc, cpuHandle);
-								cpuHandle.ptr += srvOffset;
-							}
-#endif
 						}
 
-#ifndef USE_MESHSHADER
 						// Normal
 						{
 							const D3D12_HEAP_PROPERTIES heap{
