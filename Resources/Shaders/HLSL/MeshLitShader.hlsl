@@ -1,4 +1,5 @@
 #define USE_AMPLIFICATIONSHADER
+#define USE_INSTANCING
 
 //-------------------- Amplification Shader --------------------
 
@@ -6,16 +7,62 @@
 
 struct Payload
 {
+#ifdef USE_INSTANCING
+	uint instanceIndices[AS_GROUP_SIZE];
+#endif
+
 	uint meshletIndices[AS_GROUP_SIZE];
 };
 
 groupshared Payload sPayload;
 
+//---------- Bindings ----------
+struct Camera
+{
+	/// Camera transformation matrix.
+	float4x4 view;
+
+	/**
+	*	Camera inverse view projection matrix.
+	*	projection * inverseView.
+	*/
+	float4x4 invViewProj;
+};
+cbuffer SceneBuffer : register(b0)
+{
+	Camera camera;
+	uint meshletCount;
+
+#ifdef USE_INSTANCING
+	uint instanceCount;
+#endif
+};
+
 [numthreads(AS_GROUP_SIZE, 1, 1)]
 void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint gid : SV_GroupID)
 {
-	sPayload.meshletIndices[gtid] = dtid;
-	DispatchMesh(AS_GROUP_SIZE, 1, 1, sPayload);
+	const uint meshletIndex = dtid % meshletCount;
+
+	const bool meshletValid = meshletIndex < meshletCount;
+	if (meshletValid)
+		sPayload.meshletIndices[gtid] = meshletIndex;
+
+#ifdef USE_INSTANCING
+	const uint instanceIndex = dtid / meshletCount;
+	
+	const bool instanceValid = instanceIndex < instanceCount;
+	if (instanceValid)
+		sPayload.instanceIndices[gtid] = instanceIndex;
+
+	const bool valid = meshletValid && instanceValid;
+#else
+	const bool valid = meshletValid;
+#endif
+
+	bool visible = valid;
+
+	const uint visibleCount = WaveActiveCountBits(visible);
+	DispatchMesh(visibleCount, 1, 1, sPayload);
 }
 
 //-------------------- Vertex Shader --------------------
@@ -54,23 +101,6 @@ struct VertexOutput
 	float3 color : COLOR;
 };
 
-//---------- Bindings ----------
-struct Camera
-{
-	/// Camera transformation matrix.
-	float4x4 view;
-
-	/**
-	*	Camera inverse view projection matrix.
-	*	projection * inverseView.
-	*/
-	float4x4 invViewProj;
-};
-cbuffer CameraBuffer : register(b0)
-{
-	Camera camera;
-};
-
 struct Object
 {
 	/// Object transformation matrix.
@@ -78,7 +108,11 @@ struct Object
 };
 cbuffer ObjectBuffer : register(b1)
 {
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
+	Object objects[20 * 10];
+#else
 	Object object;
+#endif
 };
 
 //-------------------- Mesh Shader --------------------
@@ -109,9 +143,17 @@ void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, in payload Payl
 {
 #ifndef USE_AMPLIFICATIONSHADER
 	uint meshletIndex = gid;
-#else
+#else // USE_AMPLIFICATIONSHADER
 	uint meshletIndex = payload.meshletIndices[gid];
+#endif // USE_AMPLIFICATIONSHADER
+
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
+	uint instanceIndex = payload.instanceIndices[gid];
+	Object currentObject = objects[instanceIndex];
+#else
+	Object currentObject = object;
 #endif
+
 	Meshlet meshlet = meshlets[meshletIndex];
 
 	SetMeshOutputCounts(meshlet.vertexCount, meshlet.triangleCount);
@@ -130,7 +172,7 @@ void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, in payload Payl
 		uint vertexIndex = meshlet.vertexOffset + gtid;
 		vertexIndex = vertexIndices[vertexIndex];
 
-		const float4 worldPosition4 = mul(object.transform, float4(vertices[vertexIndex].position, 1.0));
+		const float4 worldPosition4 = mul(currentObject.transform, float4(vertices[vertexIndex].position, 1.0));
 		outVertices[gtid].worldPosition = worldPosition4.xyz / worldPosition4.w;
 		outVertices[gtid].svPosition = mul(camera.invViewProj, worldPosition4);
 		outVertices[gtid].viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);

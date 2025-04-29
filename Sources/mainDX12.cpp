@@ -14,6 +14,7 @@
 #include <SA/Collections/Transform>
 
 #define AS_GROUP_SIZE 32
+#define USE_INSTANCING
 #define USE_AMPLIFICATIONSHADER
 #define USE_MESHSHADER
 
@@ -283,17 +284,17 @@ D3D12_RECT scissorRect{}; // VkRect2D -> D3D12_RECT
 */
 #include <d3dcompiler.h>
 
+#ifndef USE_MESHSHADER
 MComPtr<ID3DBlob> litVertexShader; // VkShaderModule -> ID3DBlob
-MComPtr<ID3DBlob> litPixelShader;
-
-
-#ifdef USE_MESHSHADER
+#else USE_MESHSHADER
 #ifdef USE_AMPLIFICATIONSHADER
 MComPtr<ID3DBlob> litAmplificationShader;
 #endif // USE_AMPLIFICATIONSHADER
 
 MComPtr<ID3DBlob> litMeshShader;
 #endif // USE_MESHSHADER
+
+MComPtr<ID3DBlob> litPixelShader;
 
 MComPtr<ID3D12RootSignature> litRootSign; // VkPipelineLayout -> ID3D12RootSignature /* 0008-1 */
 MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineState
@@ -303,11 +304,26 @@ MComPtr<ID3D12PipelineState> litPipelineState; // VkPipeline -> ID3D12PipelineSt
 
 MComPtr<ID3D12DescriptorHeap> pbrSphereSRVHeap;
 
-// = Camera Buffer =
-struct CameraUBO
+// = Scene Buffer =
+struct SceneUBO
 {
-	SA::Mat4f view;
-	SA::Mat4f invViewProj;
+	struct Camera
+	{
+		SA::Mat4f view;
+		SA::Mat4f invViewProj;
+	} camera;
+
+#ifdef USE_MESHSHADER
+	uint32_t meshletCount = 0u;
+
+#ifdef USE_INSTANCING
+	uint32_t instanceCount = 0u;
+
+	float pad0[2]{ 0.f, 0.f };
+#else // USE_INSTANCING
+	float pad0[3]{ 0.f, 0.f, 0.f };
+#endif // USE_INSTANCING
+#endif // USE_MESHSHADER
 };
 SA::TransformPRf cameraTr;
 constexpr float cameraMoveSpeed = 4.0f;
@@ -315,7 +331,13 @@ constexpr float cameraRotSpeed = 16.0f;
 constexpr float cameraNear = 0.1f;
 constexpr float cameraFar = 1000.0f;
 constexpr float cameraFOV = 90.0f;
-std::array<MComPtr<ID3D12Resource>, bufferingCount> cameraBuffers;
+std::array<MComPtr<ID3D12Resource>, bufferingCount> sceneBuffers;
+
+#ifdef USE_INSTANCING
+constexpr uint32_t numInstanceRowsCount = 10u;
+constexpr uint32_t numInstanceColsCount = 20u;
+constexpr uint32_t instanceCount = numInstanceRowsCount * numInstanceColsCount;
+#endif
 
 // = Object Buffer =
 struct ObjectUBO
@@ -323,7 +345,7 @@ struct ObjectUBO
 	SA::Mat4f transform;
 };
 constexpr SA::Vec3f spherePosition(0.5f, 0.0f, 2.0f);
-MComPtr<ID3D12Resource> sphereObjectBuffer;
+MComPtr<ID3D12Resource> sphereObjectsBuffer;
 
 // = PointLights Buffer =
 struct PointLightUBO
@@ -1209,7 +1231,7 @@ int main()
 						};
 #endif
 						const D3D12_ROOT_PARAMETER1 params[]{
-							// Camera Constant buffer
+							// Scene Constant buffer
 							{
 								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV,
 								.Descriptor = {
@@ -1220,7 +1242,7 @@ int main()
 #ifndef USE_MESHSHADER
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
 #else
-								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL,
 #endif
 							},
 							// Object Constant buffer
@@ -1375,7 +1397,7 @@ int main()
 						}
 						else
 						{
-							SA_LOG(L"Shader {VSLitShader.cso, mainMS} compilation success.", Info, DX12, litMeshShader.Get());
+							SA_LOG(L"Shader {VSLitShader.cso, mainMS} compilation success.", Info, DX12, litVertexShader.Get());
 						}
 					}
 #else
@@ -1716,7 +1738,7 @@ int main()
 				}
 
 
-				// Camera Buffers
+				// Scene Buffers
 				{
 					const D3D12_HEAP_PROPERTIES heap{
 						.Type = D3D12_HEAP_TYPE_UPLOAD, // Keep upload since we will update it each frame.
@@ -1725,7 +1747,7 @@ int main()
 					const D3D12_RESOURCE_DESC desc{
 						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 						.Alignment = 0,
-						.Width = sizeof(CameraUBO),
+						.Width = sizeof(SceneUBO),
 						.Height = 1,
 						.DepthOrArraySize = 1,
 						.MipLevels = 1,
@@ -1737,18 +1759,18 @@ int main()
 
 					for (uint32_t i = 0; i < bufferingCount; ++i)
 					{
-						const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&cameraBuffers[i]));
+						const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sceneBuffers[i]));
 						if (FAILED(hrBufferCreated))
 						{
-							SA_LOG((L"Create Camera Buffer [%1] failed!", i), Error, DX12, (L"Error code: %1", hrBufferCreated));
+							SA_LOG((L"Create Scene Buffer [%1] failed!", i), Error, DX12, (L"Error code: %1", hrBufferCreated));
 							return EXIT_FAILURE;
 						}
 						else
 						{
-							const std::wstring name = L"CameraBuffer [" + std::to_wstring(i) + L"]";
-							cameraBuffers[i]->SetName(name.c_str());
+							const std::wstring name = L"SceneBuffer [" + std::to_wstring(i) + L"]";
+							sceneBuffers[i]->SetName(name.c_str());
 
-							SA_LOG((L"Create Camera Buffer [%1] success", i), Info, DX12, (L"\"%1\" [%2]", name, cameraBuffers[i].Get()));
+							SA_LOG((L"Create Scene Buffer [%1] success", i), Info, DX12, (L"\"%1\" [%2]", name, sceneBuffers[i].Get()));
 						}
 					}
 				}
@@ -1763,7 +1785,11 @@ int main()
 					const D3D12_RESOURCE_DESC desc{
 						.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
 						.Alignment = 0,
+#ifdef USE_INSTANCING
+						.Width = instanceCount * sizeof(ObjectUBO),
+#else
 						.Width = sizeof(ObjectUBO),
+#endif
 						.Height = 1,
 						.DepthOrArraySize = 1,
 						.MipLevels = 1,
@@ -1773,7 +1799,7 @@ int main()
 						.Flags = D3D12_RESOURCE_FLAG_NONE,
 					};
 
-					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereObjectBuffer));
+					const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&sphereObjectsBuffer));
 					if (FAILED(hrBufferCreated))
 					{
 						SA_LOG(L"Create Sphere Object Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
@@ -1781,14 +1807,33 @@ int main()
 					}
 					else
 					{
-						const LPCWSTR name = L"SphereObjectBuffer";
-						sphereObjectBuffer->SetName(name);
+						const LPCWSTR name = L"SphereObjectsBuffer";
+						sphereObjectsBuffer->SetName(name);
 
-						SA_LOG(L"Create Sphere Object Buffer failed!", Info, DX12, (L"\"%1\" [%2]", name, sphereObjectBuffer.Get()));
+						SA_LOG(L"Create Sphere Objects Buffer failed!", Info, DX12, (L"\"%1\" [%2]", name, sphereObjectsBuffer.Get()));
 					}
 
-					const SA::Mat4f transform = SA::Mat4f::MakeTranslation(spherePosition);
-					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectBuffer, desc.Width, &transform, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+#ifdef USE_INSTANCING
+					std::vector<ObjectUBO> objectsUBO;
+					objectsUBO.reserve(instanceCount);
+					for (uint32_t i = 0u; i < numInstanceRowsCount; i++)
+					{
+						for (uint32_t j = 0u; j < numInstanceColsCount; j++)
+						{
+							ObjectUBO instanceUBO;
+							const SA::Vec3 instancePosition = spherePosition + SA::Vec3(5.f * i, 0.f, 5.f * j);
+							instanceUBO.transform = SA::Mat4f::MakeTranslation(instancePosition);
+							objectsUBO.push_back(instanceUBO);
+						}
+					}
+
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectsBuffer, desc.Width, objectsUBO.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+#else
+					ObjectUBO objectUBO;
+					objectUBO.transform = SA::Mat4f::MakeTranslation(spherePosition);
+
+					const bool bSubmitSuccess = SubmitBufferToGPU(sphereObjectsBuffer, desc.Width, &objectUBO, D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+#endif
 					if (!bSubmitSuccess)
 					{
 						SA_LOG(L"Sphere Object Buffer submit failed!", Error, DX12);
@@ -2849,23 +2894,29 @@ int main()
 				}
 
 
-				// Update camera.
-				auto cameraBuffer = cameraBuffers[swapchainFrameIndex];
+				// Update scene.
+				auto sceneBuffer = sceneBuffers[swapchainFrameIndex];
 				{
 
 					// Fill Data with updated values.
-					CameraUBO cameraUBO;
-					cameraUBO.view = cameraTr.Matrix();
+					SceneUBO sceneUBO;
+					sceneUBO.camera.view = cameraTr.Matrix();
 					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
-					cameraUBO.invViewProj = perspective * cameraUBO.view.GetInversed();
+					sceneUBO.camera.invViewProj = perspective * sceneUBO.camera.view.GetInversed();
 
+#ifdef USE_MESHSHADER
+					sceneUBO.meshletCount = static_cast<uint32_t>(meshletCount);
+#ifdef USE_INSTANCING
+					sceneUBO.instanceCount = static_cast<uint32_t>(instanceCount);
+#endif
+#endif
 					// Memory mapping and Upload (CPU to GPU transfer).
 					const D3D12_RANGE range{ .Begin = 0, .End = 0 };
 					void* data = nullptr;
 
-					cameraBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
-					std::memcpy(data, &cameraUBO, sizeof(CameraUBO));
-					cameraBuffer->Unmap(0, nullptr);
+					sceneBuffer->Map(0, &range, reinterpret_cast<void**>(&data));
+					std::memcpy(data, &sceneUBO, sizeof(SceneUBO));
+					sceneBuffer->Unmap(0, nullptr);
 				}
 
 
@@ -2939,8 +2990,8 @@ int main()
 						* DirectX12 doesn't have DescriptorSet: manually bind each entry of the RootSignature.
 						*/
 						cmd->SetGraphicsRootSignature(litRootSign.Get());
-						cmd->SetGraphicsRootConstantBufferView(0, cameraBuffer->GetGPUVirtualAddress()); // Camera UBO
-						cmd->SetGraphicsRootConstantBufferView(1, sphereObjectBuffer->GetGPUVirtualAddress()); // Object UBO
+						cmd->SetGraphicsRootConstantBufferView(0, sceneBuffer->GetGPUVirtualAddress()); // Scene UBO
+						cmd->SetGraphicsRootConstantBufferView(1, sphereObjectsBuffer->GetGPUVirtualAddress()); // Object UBO
 
 						const UINT srvOffset = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 						D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = pbrSphereSRVHeap->GetGPUDescriptorHandleForHeapStart();
@@ -2972,11 +3023,18 @@ int main()
 						gpuHandle.ptr += srvOffset;
 						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
 
+						UINT uMeshletCount = static_cast<UINT>(meshletCount);
 
 #ifdef USE_AMPLIFICATIONSHADER
-						const UINT threadGroupCountX = static_cast<UINT>((meshletCount / AS_GROUP_SIZE) + 1);
+#ifdef USE_INSTANCING
+						UINT uInstanceCount = static_cast<UINT>(instanceCount);
+
+						const UINT threadGroupCountX = (uMeshletCount * uInstanceCount / AS_GROUP_SIZE) + 1;
+#else
+						const UINT threadGroupCountX = (uMeshletCount / AS_GROUP_SIZE) + 1;
+#endif
 #else // USE_AMPLIFICATIONSHADER
-						const UINT threadGroupCountX = static_cast<UINT>(meshletCount);
+						const UINT threadGroupCountX = uMeshletCount;
 #endif // USE_AMPLIFICATIONSHADER
 						cmd->DispatchMesh(threadGroupCountX, 1u, 1u);
 #else // USE_MESHSHADER
@@ -3102,19 +3160,19 @@ int main()
 
 			// Scene Objects /* 0009-D */
 			{
-				// Camera Buffer
+				// Scene Buffer
 				{
 					for (uint32_t i = 0; i < bufferingCount; ++i)
 					{
-						SA_LOG((L"Destroying Camera Buffer [%1]...", i), Info, DX12, cameraBuffers[i].Get());
-						cameraBuffers[i] = nullptr;
+						SA_LOG((L"Destroying Scene Buffer [%1]...", i), Info, DX12, sceneBuffers[i].Get());
+						sceneBuffers[i] = nullptr;
 					}
 				}
 
 				// Sphere Object Buffer
 				{
-					SA_LOG(L"Destroying Sphere Object Buffer...", Info, DX12, sphereObjectBuffer.Get());
-					sphereObjectBuffer = nullptr;
+					SA_LOG(L"Destroying Sphere Objects Buffer...", Info, DX12, sphereObjectsBuffer.Get());
+					sphereObjectsBuffer = nullptr;
 				}
 
 #ifdef USE_MESHSHADER
@@ -3161,17 +3219,27 @@ int main()
 						litPixelShader = nullptr;
 					}
 
+#ifndef USE_MESHSHADER
 					// Vertex Shader
 					{
 						SA_LOG(L"Destroying Lit Vertex Shader...", Info, DX12, litVertexShader.Get());
 						litVertexShader = nullptr;
 					}
 
-					// Vertex Shader
+#else
+#ifdef USE_AMPLIFICATIONSHADER
+					// Amplification Shader
 					{
-						SA_LOG(L"Destroying Lit Vertex Shader...", Info, DX12, litMeshShader.Get());
+						SA_LOG(L"Destroying Lit Amplification Shader...", Info, DX12, litAmplificationShader.Get());
+						litAmplificationShader = nullptr;
+					}
+#endif
+					// Mesh Shader
+					{
+						SA_LOG(L"Destroying Lit Mesh Shader...", Info, DX12, litMeshShader.Get());
 						litMeshShader = nullptr;
 					}
+#endif
 
 					// RootSignature
 					{
