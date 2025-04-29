@@ -2,6 +2,9 @@
 #define USE_AMPLIFICATIONSHADER
 #define USE_INSTANCING
 #define DISPLAY_VERTEX_COLOR_ONLY
+#define USE_FRUSTUM_CONE_CULLING
+#define USE_CULLING
+#define MAX_INSTANCE_COUNT 10 * 40
 
 //-------------------- Amplification Shader --------------------
 
@@ -19,6 +22,49 @@ struct Payload
 groupshared Payload sPayload;
 
 //---------- Bindings ----------
+struct Object
+{
+	/// Object transformation matrix.
+	float4x4 transform;
+};
+cbuffer ObjectBuffer : register(b1)
+{
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
+	Object objects[MAX_INSTANCE_COUNT];
+#else
+	Object object;
+#endif
+};
+
+enum
+{
+	FRUSTUM_PLANE_LEFT = 0,
+	FRUSTUM_PLANE_RIGHT = 1,
+	FRUSTUM_PLANE_TOP = 2,
+	FRUSTUM_PLANE_BOTTOM = 3,
+	FRUSTUM_PLANE_NEAR = 4,
+	FRUSTUM_PLANE_FAR = 5,
+};
+struct FrustumPlane
+{
+	float3 normal;
+	float pad0;
+	float3 position;
+	float pad1;
+};
+struct FrustumCone
+{
+	float3 tipPosition;
+	float  height;
+	float3 direction;
+	float  angle;
+};
+struct FrustumData
+{
+	FrustumPlane planes[6];
+	float4       boundingSphere; // position = boundingSphere.xyz, radius = boundingSphere.w
+	FrustumCone  cone;
+};
 struct Camera
 {
 	/// Camera transformation matrix.
@@ -29,6 +75,10 @@ struct Camera
 	*	projection * inverseView.
 	*/
 	float4x4 invViewProj;
+
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
+	FrustumData frustum;
+#endif
 };
 cbuffer SceneBuffer : register(b0)
 {
@@ -36,9 +86,117 @@ cbuffer SceneBuffer : register(b0)
 	uint meshletCount;
 
 #ifdef USE_INSTANCING
-	uint instanceCount;
-#endif
+	uint32_t instanceCount;
+
+	float pad0[2];
+#else // USE_INSTANCING
+	float pad0[3];
+#endif // USE_INSTANCING
 };
+
+#ifdef USE_CULLING
+StructuredBuffer<float4>	meshletBounds : register(t9); // boundsBuffer
+#endif
+
+float SignedPointPlaneDistance(float3 position, float3 planeNormal, float3 planeCenter)
+{
+	return dot(normalize(planeNormal), position - planeCenter);
+};
+
+float SignedPointPlaneDistance(float3 position, FrustumPlane plane)
+{
+	return SignedPointPlaneDistance(position, plane.normal, plane.position);
+};
+
+bool VisibleFrustumCone(float3 position, float radius, in FrustumCone frustumCone)
+{
+	// Cone and sphere are within intersectable range
+	const float3 v0 = position - frustumCone.tipPosition;
+	const float  d0 = dot(v0, frustumCone.direction);
+	const bool   i0 = d0 <= (frustumCone.height + radius);
+
+	const float cs = cos(frustumCone.angle * 0.5);
+	const float sn = sin(frustumCone.angle * 0.5);
+	const float a = dot(v0, frustumCone.direction);
+	const float b = a * sn / cs;
+	const float c = sqrt(dot(v0, v0) - (a * a));
+	const float d = c - b;
+	const float e = d * cs;
+	const bool i1 = e < radius;
+
+	return i0 && i1;
+}
+
+bool VisibleFrustumSphere(float3 position, float radius, float4 frustumSphere)
+{
+	bool inside = (distance(position, frustumSphere.xyz) < (radius + frustumSphere.w));
+	return inside;
+}
+
+bool VisibleFrustumPlane(float3 position, float radius, FrustumPlane plane, bool visibleOnIntersection)
+{
+	const float signedPlaneDistance = SignedPointPlaneDistance(position, plane);
+
+	const bool positiveHalfSpace = signedPlaneDistance >= 0.0; // On positive half space of plane
+
+	if (!visibleOnIntersection)
+		return positiveHalfSpace;
+
+	const bool intersectPlane = abs(signedPlaneDistance) < radius;
+
+	return positiveHalfSpace || intersectPlane;
+}
+
+bool VisibleFrustumPlanes(float3 position, float radius, FrustumPlane frustumPlanes[6], bool visibleOnIntersection)
+{
+	// Determine if we're on the positive half space of frustum planes
+	const bool leftPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_LEFT], visibleOnIntersection);
+	const bool rightPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_RIGHT], visibleOnIntersection);
+	const bool topPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_TOP], visibleOnIntersection);
+	const bool bottomPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_BOTTOM], visibleOnIntersection);
+	const bool nearPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_NEAR], visibleOnIntersection);
+	const bool farPlaneVisible = VisibleFrustumPlane(position, radius, frustumPlanes[FRUSTUM_PLANE_FAR], visibleOnIntersection);
+	
+	const bool insideFrustumPlanes = leftPlaneVisible && rightPlaneVisible && topPlaneVisible && bottomPlaneVisible && nearPlaneVisible && farPlaneVisible;
+	return insideFrustumPlanes;
+}
+
+#ifdef USE_CULLING
+bool ComputeFrustumVisibility(float3 position, float radius)
+{
+	bool visible = false;
+#ifdef USE_FRUSTUM_SPHERE_CULLING
+
+	bool sphereVisibility = VisibleFrustumSphere(position, radius, camera.frustum.boundingSphere);
+
+	if (sphereVisibility)
+		visible = true;
+#endif // USE_FRUSTUM_SPHERE_CULLING
+
+#ifdef USE_FRUSTUM_CONE_CULLING
+	bool coneVisibility = VisibleFrustumCone(position, radius, camera.frustum.cone);
+
+	if (coneVisibility)
+		visible = true;
+#endif // USE_FRUSTUM_CONE_CULLING
+
+#ifdef USE_FRUSTUM_NEAR_PLANE_CULLING
+	bool nearPlaneVisbility = VisibleFrustumPlane(position, radius, camera.frustum.planes[FRUSTUM_PLANE_NEAR], true);
+
+	if (nearPlaneVisbility)
+		visible = true;
+#endif // USE_FRUSTUM_NEAR_PLANE_CULLING
+
+#ifdef USE_FRUSTUM_ALL_PLANES_CULLING
+	bool allPlanesVisibility = VisibleFrustumPlanes(position, radius, camera.frustum.planes, true);
+
+	if (allPlanesVisibility)
+		visible = true;
+
+#endif // USE_FRUSTUM_ALL_PLANES_CULLING
+	return visible;
+}
+#endif
 
 [numthreads(AS_GROUP_SIZE, 1, 1)]
 void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint gid : SV_GroupID)
@@ -46,22 +204,46 @@ void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint 
 	const uint meshletIndex = dtid % meshletCount;
 
 	const bool meshletValid = meshletIndex < meshletCount;
-	if (meshletValid)
-		sPayload.meshletIndices[gtid] = meshletIndex;
 
 #ifdef USE_INSTANCING
 	const uint instanceIndex = dtid / meshletCount;
 	
 	const bool instanceValid = instanceIndex < instanceCount;
-	if (instanceValid)
-		sPayload.instanceIndices[gtid] = instanceIndex;
 
 	const bool valid = meshletValid && instanceValid;
 #else
 	const bool valid = meshletValid;
 #endif
 
+#ifdef USE_CULLING
+	bool visible = false;
+	if (valid)
+	{
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
+		Object currentObject = objects[instanceIndex];
+#else
+		Object currentObject = object;
+#endif
+		const float4x4 transform = currentObject.transform;
+		const float3 meshletBoundingSpherePosition = mul(transform, float4(meshletBounds[meshletIndex].xyz, 1.0)).xyz;
+		const float meshletBoundingSphereRadius = meshletBounds[meshletIndex].w;
+
+		visible = ComputeFrustumVisibility(meshletBoundingSpherePosition, meshletBoundingSphereRadius);
+	}
+
+#else
 	bool visible = valid;
+#endif
+
+	if (visible)
+	{
+		uint index = WavePrefixCountBits(visible);
+		sPayload.meshletIndices[index] = meshletIndex;
+
+#ifdef USE_INSTANCING
+		sPayload.instanceIndices[index] = instanceIndex;
+#endif
+	}
 
 	const uint visibleCount = WaveActiveCountBits(visible);
 	DispatchMesh(visibleCount, 1, 1, sPayload);
@@ -103,20 +285,6 @@ struct VertexOutput
 	float3 color : COLOR;
 };
 
-struct Object
-{
-	/// Object transformation matrix.
-	float4x4 transform;
-};
-cbuffer ObjectBuffer : register(b1)
-{
-#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
-	Object objects[20 * 10];
-#else
-	Object object;
-#endif
-};
-
 //-------------------- Mesh Shader --------------------
 
 #define MAX_NUM_VERTS 252
@@ -133,7 +301,7 @@ struct Meshlet
 StructuredBuffer<Meshlet>        meshlets : register(t5); // meshletBuffer
 StructuredBuffer<uint>      vertexIndices : register(t6); // meshletVerticesBuffer
 StructuredBuffer<uint>    triangleIndices : register(t7); // meshletTrianglesBuffer
-StructuredBuffer<VertexFactory>  vertices : register(t8); // positionBuffer
+StructuredBuffer<VertexFactory>  vertices : register(t8); // vertexBuffer
 
 [numthreads(128, 1, 1)]
 [outputtopology("triangle")]

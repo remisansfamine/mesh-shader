@@ -1,5 +1,8 @@
 #include <array>
 
+#define NOMINMAX
+#include <algorithm>
+
 /**
 * Sapphire Suite Debugger:
 * Maxime's custom Log and Assert macros for easy debug.
@@ -14,6 +17,7 @@
 #include <SA/Collections/Transform>
 
 #define AS_GROUP_SIZE 32
+#define USE_CULLING
 #define USE_INSTANCING
 #define USE_AMPLIFICATIONSHADER
 #define USE_MESHSHADER
@@ -311,6 +315,31 @@ struct SceneUBO
 	{
 		SA::Mat4f view;
 		SA::Mat4f invViewProj;
+
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
+		struct FrustumData
+		{
+			struct FrustumPlane
+			{
+				SA::Vec3f normal;
+				float pad0[1]{ 0.f };
+				SA::Vec3f position;
+				float pad1[1]{ 0.f };
+			};
+			struct FrustumCone
+			{
+				SA::Vec3f tipPosition;
+				float height;
+				SA::Vec3f direction;
+				float angle;
+			};
+
+			FrustumPlane planes[6];
+			SA::Vec4f    boundingSphere; // position = boundingSphere.xyz, radius = boundingSphere.w
+			FrustumCone  cone;
+		} frustum;
+#endif // USE_AMPLIFICATIONSHADER && USE_CULLING
+
 	} camera;
 
 #ifdef USE_MESHSHADER
@@ -329,13 +358,292 @@ SA::TransformPRf cameraTr;
 constexpr float cameraMoveSpeed = 4.0f;
 constexpr float cameraRotSpeed = 16.0f;
 constexpr float cameraNear = 0.1f;
-constexpr float cameraFar = 1000.0f;
+constexpr float cameraFar = 50.0f;
 constexpr float cameraFOV = 90.0f;
 std::array<MComPtr<ID3D12Resource>, bufferingCount> sceneBuffers;
 
+static SA::Vec4f operator+(const SA::Vec4f& lhs, const SA::Vec4f& rhs)
+{
+	return SA::Vec4f(lhs.x + rhs.x, lhs.y + rhs.y, lhs.z + rhs.z, lhs.w + rhs.w);
+}
+
+static SA::Vec4f operator-(const SA::Vec4f& lhs, const SA::Vec4f& rhs)
+{
+	return SA::Vec4f(lhs.x - rhs.x, lhs.y - rhs.y, lhs.z - rhs.z, lhs.w - rhs.w);
+}
+
+static SA::Vec4f operator*(const SA::Vec4f& lhs, float rhs)
+{
+	return SA::Vec4f(lhs.x * rhs, lhs.y * rhs, lhs.z * rhs, lhs.w * rhs);
+}
+
+static SA::Vec4f operator/(const SA::Vec4f& lhs, float rhs)
+{
+	return SA::Vec4f(lhs.x / rhs, lhs.y / rhs, lhs.z / rhs, lhs.w / rhs);
+}
+
+static SA::Vec4f& operator/=(SA::Vec4f& lhs, float rhs)
+{
+	lhs = lhs / rhs;
+	return lhs;
+}
+
+constexpr float SqrLength(const SA::Vec4f& in)
+{
+	return in.x * in.x + in.y * in.y + in.z * in.z;
+}
+
+static float Length(const SA::Vec4f& in)
+{
+	return SA::Maths::Sqrt(SqrLength(in));
+
+}
+
+static float Dist(const SA::Vec4f& _start, const SA::Vec4f& _end)
+{
+	return Length((_start - _end));
+}
+
+enum
+{
+	FRUSTUM_PLANE_LEFT = 0,
+	FRUSTUM_PLANE_RIGHT = 1,
+	FRUSTUM_PLANE_TOP = 2,
+	FRUSTUM_PLANE_BOTTOM = 3,
+	FRUSTUM_PLANE_NEAR = 4,
+	FRUSTUM_PLANE_FAR = 5,
+};
+struct FrustumPlane
+{
+	SA::Vec3f normal;
+	SA::Vec3f position;
+
+	SA::Vec3f corner0;
+	SA::Vec3f corner1;
+	SA::Vec3f corner2;
+	SA::Vec3f corner3;
+};
+
+void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewDirection,
+	FrustumPlane* outPlaneLeft, FrustumPlane* outPlaneRight, FrustumPlane* outPlaneTop,
+	FrustumPlane* outPlaneBottom, FrustumPlane* outPlaneNear, FrustumPlane* outPlaneFar)
+{
+	constexpr SA::Vec3f cornerSideNearTopLeft	  = SA::Vec3f(-1.f, 1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearBottomLeft  = SA::Vec3f(-1.f,-1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearBottomRight = SA::Vec3f( 1.f,-1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearTopRight	  = SA::Vec3f( 1.f, 1.f, -1.f);
+
+	SA::Vec4f nearTopLeft	  = invViewProjection * SA::Vec4f(cornerSideNearTopLeft, 1.f);
+	SA::Vec4f nearBottomLeft  = invViewProjection * SA::Vec4f(cornerSideNearBottomLeft, 1.f);
+	SA::Vec4f nearBottomRight = invViewProjection * SA::Vec4f(cornerSideNearBottomRight, 1.f);
+	SA::Vec4f nearTopRight    = invViewProjection * SA::Vec4f(cornerSideNearTopRight, 1.f);
+
+	nearTopLeft     /= nearTopLeft.w;
+	nearBottomLeft  /= nearBottomLeft.w;
+	nearBottomRight /= nearBottomRight.w;
+	nearTopRight    /= nearTopRight.w;
+
+	constexpr SA::Vec3f cornerSideFarTopLeft     = SA::Vec3f(-1.f, 1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarBottomLeft  = SA::Vec3f(-1.f,-1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarBottomRight = SA::Vec3f( 1.f,-1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarTopRight    = SA::Vec3f( 1.f, 1.f, 1.f);
+
+	SA::Vec4f farTopLeft     = invViewProjection * SA::Vec4f(cornerSideFarTopLeft, 1.f);
+	SA::Vec4f farBottomLeft  = invViewProjection * SA::Vec4f(cornerSideFarBottomLeft, 1.f);
+	SA::Vec4f farBottomRight = invViewProjection * SA::Vec4f(cornerSideFarBottomRight, 1.f);
+	SA::Vec4f farTopRight    = invViewProjection * SA::Vec4f(cornerSideFarTopRight, 1.f);
+
+	farTopLeft     /= farTopLeft.w;
+	farBottomLeft  /= farBottomLeft.w;
+	farBottomRight /= farBottomRight.w;
+	farTopRight    /= farTopRight.w;
+
+	if (outPlaneLeft)
+	{
+		const SA::Vec3f halfNearLeft = SA::Vec3f(nearTopLeft + nearBottomLeft) * 0.5f;
+		const SA::Vec3f halfFarLeft = SA::Vec3f(farTopLeft + farBottomLeft) * 0.5f;
+		const SA::Vec3f u = (halfFarLeft - halfNearLeft).GetNormalized();
+		const SA::Vec3f v = SA::Vec3f(nearTopLeft - nearBottomLeft).GetNormalized();
+		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
+
+		outPlaneLeft->normal = w.GetNormalized();
+		outPlaneLeft->position = (halfNearLeft + halfFarLeft) * 0.5f;
+
+		outPlaneLeft->corner0 = farTopLeft;
+		outPlaneLeft->corner1 = farBottomLeft;
+		outPlaneLeft->corner2 = nearBottomLeft;
+		outPlaneLeft->corner3 = nearTopLeft;
+	}
+
+	if (outPlaneRight)
+	{
+		const SA::Vec3f halfNearRight = SA::Vec3f(nearTopRight + nearBottomRight) * 0.5f;
+		const SA::Vec3f halfFarRight = SA::Vec3f(farTopRight + farBottomRight) * 0.5f;
+		const SA::Vec3f u = (halfFarRight - halfNearRight).GetNormalized();
+		const SA::Vec3f v = SA::Vec3f(nearBottomLeft - nearTopLeft).GetNormalized();
+		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
+
+		outPlaneRight->normal = w.GetNormalized();
+		outPlaneRight->position = (halfNearRight + halfFarRight) * 0.5f;
+
+		outPlaneRight->corner0 = nearTopRight;
+		outPlaneRight->corner1 = nearBottomRight;
+		outPlaneRight->corner2 = farBottomRight;
+		outPlaneRight->corner3 = farTopRight;
+	}
+
+	if (outPlaneTop)
+	{
+		const SA::Vec3f halfNearTop = SA::Vec3f(nearTopLeft + nearTopRight) * 0.5f;
+		const SA::Vec3f halfFarTop = SA::Vec3f(farTopLeft + farTopRight) * 0.5f;
+		const SA::Vec3f u = (halfFarTop - halfNearTop).GetNormalized();
+		const SA::Vec3f v = SA::Vec3f(nearTopRight - nearTopLeft).GetNormalized();
+		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
+
+		outPlaneTop->normal = w.GetNormalized();
+		outPlaneTop->position = (halfNearTop + halfFarTop) * 0.5f;
+
+		outPlaneTop->corner0 = farTopLeft;
+		outPlaneTop->corner1 = nearTopLeft;
+		outPlaneTop->corner2 = nearTopRight;
+		outPlaneTop->corner3 = farTopRight;
+	}
+
+	if (outPlaneBottom)
+	{
+		const SA::Vec3f halfNearBottom = SA::Vec3f(nearBottomLeft + nearBottomRight) * 0.5f;
+		const SA::Vec3f halfFarBottom = SA::Vec3f(farBottomLeft + farBottomRight) * 0.5f;
+		const SA::Vec3f u = (halfFarBottom - halfNearBottom).GetNormalized();
+		const SA::Vec3f v = SA::Vec3f(nearBottomLeft - nearBottomRight).GetNormalized();
+		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
+
+		outPlaneBottom->normal = w.GetNormalized();
+		outPlaneBottom->position = (halfNearBottom + halfFarBottom) * 0.5f;
+
+		outPlaneBottom->corner0 = nearBottomLeft;
+		outPlaneBottom->corner1 = farBottomLeft;
+		outPlaneBottom->corner2 = farBottomRight;
+		outPlaneBottom->corner3 = nearBottomRight;
+	}
+
+	if (outPlaneNear)
+	{
+		outPlaneNear->normal = viewDirection;
+		outPlaneNear->position = (nearTopLeft + nearBottomRight) * 0.5f;
+
+		outPlaneNear->corner0 = nearTopLeft;
+		outPlaneNear->corner1 = nearBottomLeft;
+		outPlaneNear->corner2 = nearBottomRight;
+		outPlaneNear->corner3 = nearTopRight;
+	}
+
+	if (outPlaneFar)
+	{
+		outPlaneFar->normal = -viewDirection;
+		outPlaneFar->position = (farTopLeft + farBottomRight) * 0.5f;
+
+		outPlaneFar->corner0 = farTopLeft;
+		outPlaneFar->corner1 = farBottomLeft;
+		outPlaneFar->corner2 = farBottomRight;
+		outPlaneFar->corner3 = farTopRight;
+	}
+}
+
+struct FrustumCone
+{
+	SA::Vec3f tipPosition;
+	float height;
+	SA::Vec3f direction;
+	float angle;
+};
+
+FrustumCone GetFrustumCone(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewPos, const SA::Vec3f& viewDir, const float farClip, const float horizontalFOV, bool fitFarClip)
+{
+	FrustumCone cone = {};
+	cone.tipPosition = viewPos;
+	cone.direction = viewDir;
+	cone.height = farClip;
+	cone.angle = SA::Radf(horizontalFOV).Handle();
+
+	if (fitFarClip)
+	{
+		constexpr SA::Vec3f cornerSideFarTopLeft	 = SA::Vec3f(-1.f, 1.f, 1.f);
+		constexpr SA::Vec3f cornerSideFarBottomLeft  = SA::Vec3f(-1.f,-1.f, 1.f);
+		constexpr SA::Vec3f cornerSideFarBottomRight = SA::Vec3f( 1.f,-1.f, 1.f);
+		constexpr SA::Vec3f cornerSideFarTopRight	 = SA::Vec3f( 1.f, 1.f, 1.f);
+
+		SA::Vec4f farTopLeft	 = invViewProjection * SA::Vec4f(cornerSideFarTopLeft, 1.f);
+		SA::Vec4f farBottomLeft  = invViewProjection * SA::Vec4f(cornerSideFarBottomLeft, 1.f);
+		SA::Vec4f farBottomRight = invViewProjection * SA::Vec4f(cornerSideFarBottomRight, 1.f);
+		SA::Vec4f farTopRight    = invViewProjection * SA::Vec4f(cornerSideFarTopRight, 1.f);
+
+		farTopLeft	   /= farTopLeft.w;
+		farBottomLeft  /= farBottomLeft.w;
+		farBottomRight /= farBottomRight.w;
+		farTopRight	   /= farTopRight.w;
+
+		const SA::Vec4f farCenter = (farTopLeft + farBottomLeft + farBottomRight + farTopRight) / 4.0f;
+
+		const float radius = Dist(farCenter, farTopLeft);
+		cone.angle = 2.0f * atan(radius / farClip);
+	}
+
+	return cone;
+}
+
+void GetFrustumSphere(const SA::Mat4f& invViewProjection, SA::Vec3f& outPosition, float& outRadius)
+{
+	constexpr SA::Vec3f cornerSideNearTopLeft	  = SA::Vec3f(-1.f, 1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearBottomLleft = SA::Vec3f(-1.f,-1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearBottomRight = SA::Vec3f( 1.f,-1.f, -1.f);
+	constexpr SA::Vec3f cornerSideNearTopRight	  = SA::Vec3f( 1.f, 1.f, -1.f);
+
+	SA::Vec4f nearTopLeft	  = invViewProjection * SA::Vec4f(cornerSideNearTopLeft, 1.f);
+	SA::Vec4f nearBottomLeft  = invViewProjection * SA::Vec4f(cornerSideNearBottomLleft, 1.f);
+	SA::Vec4f nearBottomRight = invViewProjection * SA::Vec4f(cornerSideNearBottomRight, 1.f);
+	SA::Vec4f nearTopRight    = invViewProjection * SA::Vec4f(cornerSideNearTopRight, 1.f);
+
+	nearTopLeft		/= nearTopLeft.w;
+	nearBottomLeft	/= nearBottomLeft.w;
+	nearBottomRight /= nearBottomRight.w;
+	nearTopRight	/= nearTopRight.w;
+
+	constexpr SA::Vec3f cornerSideFarTopLeft	 = SA::Vec3f(-1.f, 1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarBottomLeft	 = SA::Vec3f(-1.f,-1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarBottomRight = SA::Vec3f( 1.f,-1.f, 1.f);
+	constexpr SA::Vec3f cornerSideFarTopRight	 = SA::Vec3f( 1.f, 1.f, 1.f);
+
+	SA::Vec4f farTopLeft	 = invViewProjection * SA::Vec4f(cornerSideFarTopLeft, 1.f);
+	SA::Vec4f farBottomLeft  = invViewProjection * SA::Vec4f(cornerSideFarBottomLeft, 1.f);
+	SA::Vec4f farBottomRight = invViewProjection * SA::Vec4f(cornerSideFarBottomRight, 1.f);
+	SA::Vec4f farTopRight    = invViewProjection * SA::Vec4f(cornerSideFarTopRight, 1.f);
+
+	farTopLeft	   /= farTopLeft.w;
+	farBottomLeft  /= farBottomLeft.w;
+	farBottomRight /= farBottomRight.w;
+	farTopRight	   /= farTopRight.w;
+
+	const SA::Vec4f nearCenter = (nearTopLeft + nearBottomLeft + nearBottomRight + nearTopRight) / 4.f;
+	const SA::Vec4f farCenter = (farTopLeft + farBottomLeft + farBottomRight + farTopRight) / 4.f;
+	const SA::Vec3f center = SA::Vec3f(nearCenter + farCenter) * 0.5f;
+	
+	float radius = SA::Vec3f::Dist(center, SA::Vec3f(nearTopLeft));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(nearBottomLeft)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(nearBottomRight)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(nearTopRight)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(farTopLeft)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(farBottomLeft)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(farBottomRight)));
+	radius = std::max(radius, SA::Vec3f::Dist(center, SA::Vec3f(farTopRight)));
+
+	outPosition = center;
+	outRadius = radius;
+}
+
+
 #ifdef USE_INSTANCING
 constexpr uint32_t numInstanceRowsCount = 10u;
-constexpr uint32_t numInstanceColsCount = 20u;
+constexpr uint32_t numInstanceColsCount = 40u;
 constexpr uint32_t instanceCount = numInstanceRowsCount * numInstanceColsCount;
 #endif
 
@@ -569,7 +877,7 @@ bool SubmitTextureToGPU(MComPtr<ID3D12Resource> _gpuTexture, const std::vector<S
 
 void GenerateMipMapsCPU(SA::Vec2ui _extent, std::vector<char>& _data, uint32_t& _outMipLevels, uint32_t& _outTotalSize, std::vector<SA::Vec2ui>& _outExtents, uint32_t _channelNum, uint32_t _layerNum = 1u)
 {
-	_outMipLevels = static_cast<uint32_t>(std::floor(std::log2(max(_extent.x, _extent.y)))) + 1;
+	_outMipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(_extent.x, _extent.y)))) + 1;
 
 	_outExtents.resize(_outMipLevels);
 
@@ -642,7 +950,9 @@ size_t meshletCount = 0u;
 MComPtr<ID3D12Resource> meshletBuffer; // VkBuffer -> ID3D12Resource
 MComPtr<ID3D12Resource> meshletVerticesBuffer; // VkBuffer -> ID3D12Resource
 MComPtr<ID3D12Resource> meshletTrianglesBuffer; // VkBuffer -> ID3D12Resource
-
+#ifdef USE_CULLING
+MComPtr<ID3D12Resource> meshletBoundsBuffer; // VkBuffer -> ID3D12Resource
+#endif
 #endif
 uint32_t sphereIndexCount = 0u;
 MComPtr<ID3D12Resource> sphereIndexBuffer;
@@ -1203,7 +1513,7 @@ int main()
 							},
 						};
 #ifdef USE_MESHSHADER
-						const D3D12_DESCRIPTOR_RANGE1 meshletSRVRanges[4]
+						const D3D12_DESCRIPTOR_RANGE1 meshletSRVRanges[]
 						{
 							// Meshlets
 							{
@@ -1241,10 +1551,21 @@ int main()
 								.RegisterSpace = 0,
 								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
 								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+							},
+#ifdef USE_CULLING
+							// Bounds
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 9,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
 							}
+#endif // USE_CULLING
 						};
 
-#endif
+#endif // USE_MESHSHADER
 						const D3D12_ROOT_PARAMETER1 params[]{
 							// Scene Constant buffer
 							{
@@ -1270,9 +1591,13 @@ int main()
 								},
 #ifndef USE_MESHSHADER
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX,
-#else
+#else // USE_MESHSHADER
+#ifndef USE_CULLING
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
-#endif
+#else // USE_CULLING
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL,
+#endif // USE_CULLING
+#endif // USE_MESHSHADER
 							},
 							// Point Lights Structured buffer
 							{
@@ -1304,7 +1629,11 @@ int main()
 									.NumDescriptorRanges = _countof(meshletSRVRanges),
 									.pDescriptorRanges = meshletSRVRanges
 								},
+#ifndef USE_CULLING
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
+#else
+								.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL
+#endif
 							},
 #endif
 						};
@@ -1704,10 +2033,14 @@ int main()
 					D3D12_DESCRIPTOR_HEAP_DESC desc{
 						.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
 #ifdef USE_MESHSHADER
+#ifdef USE_CULLING
+						.NumDescriptors = 10,
+#else // USE_CULLING
 						.NumDescriptors = 9,
-#else
+#endif // USE_CULLING
+#else // USE_MESHSHADER
 						.NumDescriptors = 5,
-#endif
+#endif // USE_MESHSHADER
 						.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE
 					};
 
@@ -1957,25 +2290,38 @@ int main()
 						meshletTriangles.resize(last.triangle_offset + ((last.triangle_count * 3 + 3) & ~3));
 						meshlets.resize(meshletCount);
 
+#ifdef USE_CULLING
+						std::vector<SA::Vec4f> meshletBounds;
+						meshletBounds.reserve(meshletCount);
+#endif // USE_CULLING
 						std::vector<uint32_t> meshletTrianglesU32;
 						for (meshopt_Meshlet& meshlet : meshlets)
 						{
+#ifdef USE_CULLING
+							const meshopt_Bounds bounds = meshopt_computeMeshletBounds(&meshletVertices[meshlet.vertex_offset], &meshletTriangles[meshlet.triangle_offset],
+								meshlet.triangle_count, reinterpret_cast<const float*>(inMesh->mVertices), inMesh->mNumVertices,
+								sizeof(SA::Vec3f));
+
+							meshletBounds.push_back(SA::Vec4f(bounds.center[0], bounds.center[1], bounds.center[2], bounds.radius));
+#endif // USE_CULLING
+
 							// Save triangle offset for current meshlet
 							uint32_t triangleOffset = static_cast<uint32_t>(meshletTrianglesU32.size());
 
 							// Repack to uint32_t
 							for (uint32_t i = 0; i < meshlet.triangle_count; ++i)
 							{
-								uint32_t i0 = 3 * i + 0 + meshlet.triangle_offset;
-								uint32_t i1 = 3 * i + 1 + meshlet.triangle_offset;
-								uint32_t i2 = 3 * i + 2 + meshlet.triangle_offset;
+								const uint32_t i0 = 3 * i + 0 + meshlet.triangle_offset;
+								const uint32_t i1 = 3 * i + 1 + meshlet.triangle_offset;
+								const uint32_t i2 = 3 * i + 2 + meshlet.triangle_offset;
 
-								uint8_t  vertIdx0 = meshletTriangles[i0];
-								uint8_t  vertIdx1 = meshletTriangles[i1];
-								uint8_t  vertIdx2 = meshletTriangles[i2];
-								uint32_t packedIdx = ((static_cast<uint32_t>(vertIdx0) & 0xFF) << 0) |
-									((static_cast<uint32_t>(vertIdx1) & 0xFF) << 8) |
-									((static_cast<uint32_t>(vertIdx2) & 0xFF) << 16);
+								const uint8_t  vertIdx0 = meshletTriangles[i0];
+								const uint8_t  vertIdx1 = meshletTriangles[i1];
+								const uint8_t  vertIdx2 = meshletTriangles[i2];
+								const uint32_t packedIdx = ((static_cast<uint32_t>(vertIdx0) & 0xFF) << 0) |
+														   ((static_cast<uint32_t>(vertIdx1) & 0xFF) << 8) |
+														   ((static_cast<uint32_t>(vertIdx2) & 0xFF) << 16);
+
 								meshletTrianglesU32.push_back(packedIdx);
 							}
 
@@ -2184,8 +2530,8 @@ int main()
 								SA_LOG(L"Create Vertex Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, sphereVertexBuffers[0].Get()));
 							}
 
-							std::vector<Vertex> verices;
-							verices.reserve(inMesh->mNumVertices);
+							std::vector<Vertex> vertices;
+							vertices.reserve(inMesh->mNumVertices);
 
 							for (uint32_t i = 0; i < inMesh->mNumVertices; ++i)
 							{
@@ -2199,10 +2545,10 @@ int main()
 								vert.normal = SA::Vec3f(inNormal.x, inNormal.y, inNormal.z);
 								vert.tangent = SA::Vec3f(inTangent.x, inTangent.y, inTangent.z);
 								vert.uv = SA::Vec2f(inTexCoords.x, inTexCoords.y);
-								verices.push_back(vert);
+								vertices.push_back(vert);
 							}
 
-							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[0], desc.Width, verices.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							const bool bSubmitSuccess = SubmitBufferToGPU(sphereVertexBuffers[0], desc.Width, vertices.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
 							if (!bSubmitSuccess)
 							{
 								SA_LOG(L"Sphere Position submit failed!", Error, DX12);
@@ -2216,7 +2562,7 @@ int main()
 									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
 									.Buffer{
 										.FirstElement = 0,
-										.NumElements = static_cast<UINT>(verices.size()),
+										.NumElements = static_cast<UINT>(vertices.size()),
 										.StructureByteStride = sizeof(Vertex),
 									},
 								};
@@ -2224,7 +2570,64 @@ int main()
 								cpuHandle.ptr += srvOffset;
 							}
 						}
-#else
+#ifdef USE_CULLING
+						// Meshlet Bounds
+						{
+							const D3D12_HEAP_PROPERTIES heap{
+								.Type = D3D12_HEAP_TYPE_DEFAULT, // Type Default is GPU only.
+							};
+
+							const D3D12_RESOURCE_DESC desc{
+								.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER,
+								.Alignment = 0,
+								.Width = sizeof(SA::Vec4f) * meshletBounds.size(),
+								.Height = 1,
+								.DepthOrArraySize = 1,
+								.MipLevels = 1,
+								.Format = DXGI_FORMAT_UNKNOWN,
+								.SampleDesc = {.Count = 1, .Quality = 0 },
+								.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR,
+								.Flags = D3D12_RESOURCE_FLAG_NONE,
+							};
+
+							const HRESULT hrBufferCreated = device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COMMON, nullptr, IID_PPV_ARGS(&meshletBoundsBuffer));
+							if (FAILED(hrBufferCreated))
+							{
+								SA_LOG(L"Create Meshlet Bounds Buffer failed!", Error, DX12, (L"Error code: %1", hrBufferCreated));
+								return EXIT_FAILURE;
+							}
+							else
+							{
+								const LPCWSTR name = L"MeshletBoundsBuffer";
+								meshletBoundsBuffer->SetName(name);
+
+								SA_LOG(L"Create Meshlet Bounds Buffer success.", Info, DX12, (L"\"%1\" [%2]", name, meshletBoundsBuffer.Get()));
+							}
+
+							const bool bSubmitSuccess = SubmitBufferToGPU(meshletBoundsBuffer, desc.Width, meshletBounds.data(), D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER);
+							if (!bSubmitSuccess)
+							{
+								SA_LOG(L"Sphere Meshlet Bounds Buffer submit failed!", Error, DX12);
+								return EXIT_FAILURE;
+							}
+
+							// Create View /* 0011-I-8 */
+							{
+								D3D12_SHADER_RESOURCE_VIEW_DESC viewDesc{
+									.ViewDimension = D3D12_SRV_DIMENSION_BUFFER,
+									.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING,
+									.Buffer{
+										.FirstElement = 0,
+										.NumElements = static_cast<UINT>(meshletBounds.size()),
+										.StructureByteStride = sizeof(SA::Vec4f),
+									},
+								};
+								device->CreateShaderResourceView(meshletBoundsBuffer.Get(), &viewDesc, cpuHandle);
+								cpuHandle.ptr += srvOffset;
+							}
+						}
+#endif // USE_CULLING
+#else // USE_MESHSHADER
 						// Position
 						{
 							/**
@@ -2427,7 +2830,7 @@ int main()
 								return EXIT_FAILURE;
 							}
 						}
-#endif
+#endif // USE_MESHSHADER
 
 						// Index
 						{
@@ -2944,11 +3347,45 @@ int main()
 				auto sceneBuffer = sceneBuffers[swapchainFrameIndex];
 				{
 
+					const float windowsAspect = float(windowSize.x) / float(windowSize.y);
+					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, windowsAspect, cameraNear, cameraFar);
+					const SA::Mat4f viewMatrix = cameraTr.Matrix();
+					const SA::Mat4f viewProjection = perspective * viewMatrix;
+					const SA::Mat4f invView = viewMatrix.GetInversed();
+					const SA::Mat4f invViewProjection = viewProjection.GetInversed();
+
 					// Fill Data with updated values.
 					SceneUBO sceneUBO;
-					sceneUBO.camera.view = cameraTr.Matrix();
-					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, float(windowSize.x) / float(windowSize.y), cameraNear, cameraFar);
-					sceneUBO.camera.invViewProj = perspective * sceneUBO.camera.view.GetInversed();
+					sceneUBO.camera.view = viewMatrix;
+					sceneUBO.camera.invViewProj = perspective * invView;
+
+#ifdef USE_CULLING
+					const SA::Vec3f viewDirection = cameraTr.Forward().GetNormalized();
+
+					FrustumPlane planeLeft, planeRight, planeTop, planeBottom, planeNear, planeFar;
+					GetFrustumPlanes(invViewProjection, viewDirection, &planeLeft, &planeRight, &planeTop, &planeBottom, &planeNear, &planeFar);
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_LEFT]	 = { planeLeft.normal,	 0.0f, planeLeft.position,   0.0f };
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_RIGHT]  = { planeRight.normal,  0.0f, planeRight.position,  0.0f };
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_TOP]	 = { planeTop.normal,	 0.0f, planeTop.position,    0.0f };
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_BOTTOM] = { planeBottom.normal, 0.0f, planeBottom.position, 0.0f };
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_NEAR]	 = { planeNear.normal,	 0.0f, planeNear.position,   0.0f };
+					sceneUBO.camera.frustum.planes[FRUSTUM_PLANE_FAR]	 = { planeFar.normal,	 0.0f, planeFar.position,    0.0f };
+
+					FrustumCone cone = GetFrustumCone(invViewProjection, cameraTr.position, viewDirection, cameraFar, cameraFOV, true);
+					
+					sceneUBO.camera.frustum.cone =
+					{
+						.tipPosition = cone.tipPosition,
+						.height = cone.height,
+						.direction = cone.direction,
+						.angle = cone.angle
+					};
+
+					SA::Vec3f frustumBoundingSphereCenter;
+					float frustumBoundingSphereRadius;
+					GetFrustumSphere(invViewProjection, frustumBoundingSphereCenter, frustumBoundingSphereRadius);
+					sceneUBO.camera.frustum.boundingSphere = SA::Vec4f(frustumBoundingSphereCenter, frustumBoundingSphereRadius);
+#endif
 
 #ifdef USE_MESHSHADER
 					sceneUBO.meshletCount = static_cast<uint32_t>(meshletCount);
@@ -3058,7 +3495,7 @@ int main()
 
 #ifdef USE_MESHSHADER
 						gpuHandle.ptr += srvOffset * 4u;
-						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets, meshlet vertices, meshlet triangles, vertices
+						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets, meshlet vertices, meshlet triangles, vertices, bounds
 
 						UINT uMeshletCount = static_cast<UINT>(meshletCount);
 
@@ -3223,6 +3660,11 @@ int main()
 
 					SA_LOG(L"Destroying Meshlet Triangles Buffers...", Info, DX12, meshletTrianglesBuffer.Get());
 					meshletTrianglesBuffer = nullptr;
+
+#ifdef USE_CULLING
+					SA_LOG(L"Destroying Meshlet Bounds Buffers...", Info, DX12, meshletBoundsBuffer.Get());
+					meshletBoundsBuffer = nullptr;
+#endif
 				}
 #endif
 
