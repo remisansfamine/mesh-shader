@@ -1203,41 +1203,47 @@ int main()
 							},
 						};
 #ifdef USE_MESHSHADER
-						const D3D12_DESCRIPTOR_RANGE1 meshletSRVRange{
-							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-							.NumDescriptors = 1,
-							.BaseShaderRegister = 5,
-							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
-							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+						const D3D12_DESCRIPTOR_RANGE1 meshletSRVRanges[4]
+						{
+							// Meshlets
+							{
+
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 5,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+							},
+							// Meshlet vertices
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 6,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+							},
+							// Meshlet triangles
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 7,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+							},
+							// Vertices
+							{
+								.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
+								.NumDescriptors = 1,
+								.BaseShaderRegister = 8,
+								.RegisterSpace = 0,
+								.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
+								.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
+							}
 						};
 
-						const D3D12_DESCRIPTOR_RANGE1 meshletVerticesSRVRange{
-							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-							.NumDescriptors = 1,
-							.BaseShaderRegister = 6,
-							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
-							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
-						};
-
-						const D3D12_DESCRIPTOR_RANGE1 meshletTrianglesSRVRange{
-							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-							.NumDescriptors = 1,
-							.BaseShaderRegister = 7,
-							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
-							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
-						};
-
-						const D3D12_DESCRIPTOR_RANGE1 verticesSRVRange{
-							.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV,
-							.NumDescriptors = 1,
-							.BaseShaderRegister = 8,
-							.RegisterSpace = 0,
-							.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE,
-							.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND
-						};
 #endif
 						const D3D12_ROOT_PARAMETER1 params[]{
 							// Scene Constant buffer
@@ -1291,39 +1297,12 @@ int main()
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL,
 							},
 #ifdef USE_MESHSHADER
-							// Meshlet Structured buffers
+							// Meshlet table
 							{
 								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
 								.DescriptorTable {
-									.NumDescriptorRanges = 1,
-									.pDescriptorRanges = &meshletSRVRange
-								},
-								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
-							},
-							// Meshlet Vertices Structured buffers
-							{
-								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-								.DescriptorTable {
-									.NumDescriptorRanges = 1,
-									.pDescriptorRanges = &meshletVerticesSRVRange
-								},
-								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
-							},
-							// Meshlet Triangles Structured buffers
-							{
-								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-								.DescriptorTable {
-									.NumDescriptorRanges = 1,
-									.pDescriptorRanges = &meshletTrianglesSRVRange
-								},
-								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
-							},
-							// Vertices Structured buffers
-							{
-								.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE,
-								.DescriptorTable {
-									.NumDescriptorRanges = 1,
-									.pDescriptorRanges = &verticesSRVRange
+									.NumDescriptorRanges = _countof(meshletSRVRanges),
+									.pDescriptorRanges = meshletSRVRanges
 								},
 								.ShaderVisibility = D3D12_SHADER_VISIBILITY_MESH,
 							},
@@ -3079,16 +3058,7 @@ int main()
 
 #ifdef USE_MESHSHADER
 						gpuHandle.ptr += srvOffset * 4u;
-						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets
-
-						gpuHandle.ptr += srvOffset;
-						cmd->SetGraphicsRootDescriptorTable(5, gpuHandle); // Meshlet vertices
-
-						gpuHandle.ptr += srvOffset;
-						cmd->SetGraphicsRootDescriptorTable(6, gpuHandle); // Meshlet triangles
-
-						gpuHandle.ptr += srvOffset;
-						cmd->SetGraphicsRootDescriptorTable(7, gpuHandle); // Vertices
+						cmd->SetGraphicsRootDescriptorTable(4, gpuHandle); // Meshlets, meshlet vertices, meshlet triangles, vertices
 
 						UINT uMeshletCount = static_cast<UINT>(meshletCount);
 
