@@ -3,7 +3,10 @@
 #define USE_AMPLIFICATIONSHADER
 #define USE_INSTANCING
 #define DISPLAY_VERTEX_COLOR_ONLY
-#define USE_FRUSTUM_CONE_CULLING
+//#define USE_FRUSTUM_SINGLE_PLANE_CULLING FRUSTUM_PLANE_NEAR
+#define USE_FRUSTUM_ALL_PLANES_CULLING
+//#define USE_FRUSTUM_SPHERE_CULLING
+//#define USE_FRUSTUM_CONE_CULLING
 #define USE_CULLING
 #define MAX_INSTANCE_COUNT 10 * 40
 
@@ -181,15 +184,15 @@ bool ComputeFrustumVisibility(float3 position, float radius)
 		visible = true;
 #endif // USE_FRUSTUM_CONE_CULLING
 
-#ifdef USE_FRUSTUM_NEAR_PLANE_CULLING
-	bool nearPlaneVisbility = VisibleFrustumPlane(position, radius, camera.frustum.planes[FRUSTUM_PLANE_NEAR], true);
+#ifdef USE_FRUSTUM_SINGLE_PLANE_CULLING
+	bool planeVisbility = VisibleFrustumPlane(position, radius, camera.frustum.planes[USE_FRUSTUM_SINGLE_PLANE_CULLING], true);
 
-	if (nearPlaneVisbility)
+	if (planeVisbility)
 		visible = true;
-#endif // USE_FRUSTUM_NEAR_PLANE_CULLING
+#endif // USE_FRUSTUM_SINGLE_PLANE_CULLING
 
 #ifdef USE_FRUSTUM_ALL_PLANES_CULLING
-	bool allPlanesVisibility = VisibleFrustumPlanes(position, radius, camera.frustum.planes, true);
+	bool allPlanesVisibility = VisibleFrustumPlanes(position, radius, camera.frustum.planes, false);
 
 	if (allPlanesVisibility)
 		visible = true;
