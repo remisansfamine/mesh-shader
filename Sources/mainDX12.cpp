@@ -355,7 +355,7 @@ struct SceneUBO
 #endif // USE_MESHSHADER
 };
 SA::TransformPRf cameraTr;
-constexpr float cameraMoveSpeed = 4.0f;
+constexpr float cameraMoveSpeed = 10.0f;
 constexpr float cameraRotSpeed = 16.0f;
 constexpr float cameraNear = 0.1f;
 constexpr float cameraFar = 50.0f;
@@ -386,6 +386,19 @@ static SA::Vec4f& operator/=(SA::Vec4f& lhs, float rhs)
 {
 	lhs = lhs / rhs;
 	return lhs;
+}
+
+template <typename T>
+SA::Mat4<T> MakePerspectiveNegativeOneToOne(T _fov, T _aspect, T _near, T _far) noexcept
+{
+	const T tanHalfFovy = std::tan(SA::Maths::DegToRad<T> *_fov / T(2));
+
+	return SA::Mat4<float>(
+		T(1) / (_aspect * tanHalfFovy),	0,						0,										0,
+		0,								T(1) / (tanHalfFovy),	0,										0,
+		0,								0,						(_far + _near) / (_far - _near),		-(T(2) * _far * _near) / (_far - _near),
+		0,								0,						T(1),									0
+	);
 }
 
 constexpr float SqrLength(const SA::Vec4f& in)
@@ -424,7 +437,8 @@ struct FrustumPlane
 	SA::Vec3f corner3;
 };
 
-void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewDirection,
+template <typename T, SA::MatrixMajor major>
+void GetFrustumPlanes(const SA::Mat4<T, major>& invViewProjection, const SA::Vec3f& viewDirection,
 	FrustumPlane* outPlaneLeft, FrustumPlane* outPlaneRight, FrustumPlane* outPlaneTop,
 	FrustumPlane* outPlaneBottom, FrustumPlane* outPlaneNear, FrustumPlane* outPlaneFar)
 {
@@ -462,8 +476,8 @@ void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewD
 	{
 		const SA::Vec3f halfNearLeft = SA::Vec3f(nearTopLeft + nearBottomLeft) * 0.5f;
 		const SA::Vec3f halfFarLeft = SA::Vec3f(farTopLeft + farBottomLeft) * 0.5f;
-		const SA::Vec3f u = (halfFarLeft - halfNearLeft).GetNormalized();
-		const SA::Vec3f v = SA::Vec3f(nearTopLeft - nearBottomLeft).GetNormalized();
+		const SA::Vec3f u = SA::Vec3f(nearTopLeft - nearBottomLeft).GetNormalized();
+		const SA::Vec3f v = (halfFarLeft - halfNearLeft).GetNormalized();
 		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
 
 		outPlaneLeft->normal = w.GetNormalized();
@@ -479,8 +493,8 @@ void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewD
 	{
 		const SA::Vec3f halfNearRight = SA::Vec3f(nearTopRight + nearBottomRight) * 0.5f;
 		const SA::Vec3f halfFarRight = SA::Vec3f(farTopRight + farBottomRight) * 0.5f;
-		const SA::Vec3f u = (halfFarRight - halfNearRight).GetNormalized();
-		const SA::Vec3f v = SA::Vec3f(nearBottomLeft - nearTopLeft).GetNormalized();
+		const SA::Vec3f u = SA::Vec3f(nearBottomLeft - nearTopLeft).GetNormalized();
+		const SA::Vec3f v = (halfFarRight - halfNearRight).GetNormalized();
 		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
 
 		outPlaneRight->normal = w.GetNormalized();
@@ -496,8 +510,8 @@ void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewD
 	{
 		const SA::Vec3f halfNearTop = SA::Vec3f(nearTopLeft + nearTopRight) * 0.5f;
 		const SA::Vec3f halfFarTop = SA::Vec3f(farTopLeft + farTopRight) * 0.5f;
-		const SA::Vec3f u = (halfFarTop - halfNearTop).GetNormalized();
-		const SA::Vec3f v = SA::Vec3f(nearTopRight - nearTopLeft).GetNormalized();
+		const SA::Vec3f u = SA::Vec3f(nearTopRight - nearTopLeft).GetNormalized();
+		const SA::Vec3f v = (halfFarTop - halfNearTop).GetNormalized();
 		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
 
 		outPlaneTop->normal = w.GetNormalized();
@@ -513,8 +527,8 @@ void GetFrustumPlanes(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewD
 	{
 		const SA::Vec3f halfNearBottom = SA::Vec3f(nearBottomLeft + nearBottomRight) * 0.5f;
 		const SA::Vec3f halfFarBottom = SA::Vec3f(farBottomLeft + farBottomRight) * 0.5f;
-		const SA::Vec3f u = (halfFarBottom - halfNearBottom).GetNormalized();
-		const SA::Vec3f v = SA::Vec3f(nearBottomLeft - nearBottomRight).GetNormalized();
+		const SA::Vec3f u = SA::Vec3f(nearBottomLeft - nearBottomRight).GetNormalized();
+		const SA::Vec3f v = (halfFarBottom - halfNearBottom).GetNormalized();
 		const SA::Vec3f w = SA::Vec3f::Cross(u, v);
 
 		outPlaneBottom->normal = w.GetNormalized();
@@ -557,7 +571,8 @@ struct FrustumCone
 	float angle;
 };
 
-FrustumCone GetFrustumCone(const SA::Mat4f& invViewProjection, const SA::Vec3f& viewPos, const SA::Vec3f& viewDir, const float farClip, const float horizontalFOV, bool fitFarClip)
+template <typename T, SA::MatrixMajor major>
+FrustumCone GetFrustumCone(const SA::Mat4<T, major>& invViewProjection, const SA::Vec3f& viewPos, const SA::Vec3f& viewDir, const float farClip, const float horizontalFOV, bool fitFarClip)
 {
 	FrustumCone cone = {};
 	cone.tipPosition = viewPos;
@@ -591,7 +606,8 @@ FrustumCone GetFrustumCone(const SA::Mat4f& invViewProjection, const SA::Vec3f& 
 	return cone;
 }
 
-void GetFrustumSphere(const SA::Mat4f& invViewProjection, SA::Vec3f& outPosition, float& outRadius)
+template <typename T, SA::MatrixMajor major>
+void GetFrustumSphere(const SA::Mat4<T, major>& invViewProjection, SA::Vec3f& outPosition, float& outRadius)
 {
 	constexpr SA::Vec3f cornerSideNearTopLeft	  = SA::Vec3f(-1.f, 1.f, -1.f);
 	constexpr SA::Vec3f cornerSideNearBottomLleft = SA::Vec3f(-1.f,-1.f, -1.f);
@@ -3349,15 +3365,15 @@ int main()
 
 					const float windowsAspect = float(windowSize.x) / float(windowSize.y);
 					const SA::Mat4f perspective = SA::Mat4f::MakePerspective(cameraFOV, windowsAspect, cameraNear, cameraFar);
-					const SA::Mat4f viewMatrix = cameraTr.Matrix();
+					const SA::Mat4f cameraTransform = cameraTr.Matrix();
+					const SA::Mat4f viewMatrix = cameraTransform.GetInversed();
 					const SA::Mat4f viewProjection = perspective * viewMatrix;
-					const SA::Mat4f invView = viewMatrix.GetInversed();
 					const SA::Mat4f invViewProjection = viewProjection.GetInversed();
 
 					// Fill Data with updated values.
 					SceneUBO sceneUBO;
-					sceneUBO.camera.view = viewMatrix;
-					sceneUBO.camera.invViewProj = perspective * invView;
+					sceneUBO.camera.view = cameraTransform;
+					sceneUBO.camera.invViewProj = viewProjection;
 
 #ifdef USE_CULLING
 					const SA::Vec3f viewDirection = cameraTr.Forward().GetNormalized();
@@ -3380,10 +3396,11 @@ int main()
 						.direction = cone.direction,
 						.angle = cone.angle
 					};
-
 					SA::Vec3f frustumBoundingSphereCenter;
 					float frustumBoundingSphereRadius;
 					GetFrustumSphere(invViewProjection, frustumBoundingSphereCenter, frustumBoundingSphereRadius);
+
+					SA_LOG(frustumBoundingSphereCenter);
 					sceneUBO.camera.frustum.boundingSphere = SA::Vec4f(frustumBoundingSphereCenter, frustumBoundingSphereRadius);
 #endif
 
