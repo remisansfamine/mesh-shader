@@ -1,4 +1,5 @@
-#define USE_MESHLET_ID_AS_VERTEX_COLOR
+//#define USE_MESHLET_ID_AS_VERTEX_COLOR
+#define USE_MESH_SHADER_GROUP_ID_AS_VERTEX_COLOR
 #define USE_AMPLIFICATIONSHADER
 #define USE_INSTANCING
 #define DISPLAY_VERTEX_COLOR_ONLY
@@ -348,12 +349,17 @@ void mainMS(uint gtid : SV_GroupThreadID, uint gid : SV_GroupID, in payload Payl
 		outVertices[gtid].svPosition = mul(camera.invViewProj, worldPosition4);
 		outVertices[gtid].viewPosition = float3(camera.view._14, camera.view._24, camera.view._34);
 
+#if defined(USE_MESHLET_ID_AS_VERTEX_COLOR) || defined(USE_MESH_SHADER_GROUP_ID_AS_VERTEX_COLOR)
 #ifdef USE_MESHLET_ID_AS_VERTEX_COLOR
-		float3 meshletColor = float3(float(gid & 1), float(gid & 3) / 4, float(gid & 7) / 8);
+		int colorId = meshletIndex;
+#elif defined(USE_MESH_SHADER_GROUP_ID_AS_VERTEX_COLOR)
+		int colorId = gid;
+#endif // USE_MESHLET_ID_AS_VERTEX_COLOR
+		float3 meshletColor = float3(float(colorId & 1), float(colorId & 3) / 4, float(colorId & 7) / 8);
 		outVertices[gtid].color = meshletColor;
-#else
+#else // USE_MESHLET_ID_AS_VERTEX_COLOR || USE_MESH_SHADER_GROUP_ID_AS_VERTEX_COLOR
 		outVertices[gtid].color = float3(1.0, 1.0, 1.0);
-#endif
+#endif // USE_MESHLET_ID_AS_VERTEX_COLOR || USE_MESH_SHADER_GROUP_ID_AS_VERTEX_COLOR
 
 		//---------- Normal ----------
 		const float3 normal = normalize(vertex.normal);
