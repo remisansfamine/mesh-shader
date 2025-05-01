@@ -3,10 +3,10 @@
 #define USE_AMPLIFICATIONSHADER
 #define USE_INSTANCING
 #define DISPLAY_VERTEX_COLOR_ONLY
-//#define USE_FRUSTUM_SINGLE_PLANE_CULLING FRUSTUM_PLANE_NEAR
-#define USE_FRUSTUM_ALL_PLANES_CULLING
+#define USE_FRUSTUM_SINGLE_PLANE_CULLING FRUSTUM_PLANE_NEAR
+#define USE_FRUSTUM_CONE_CULLING
+//#define USE_FRUSTUM_ALL_PLANES_CULLING
 //#define USE_FRUSTUM_SPHERE_CULLING
-//#define USE_FRUSTUM_CONE_CULLING
 #define USE_CULLING
 #define MAX_INSTANCE_COUNT 10 * 40
 
@@ -168,39 +168,29 @@ bool VisibleFrustumPlanes(float3 position, float radius, FrustumPlane frustumPla
 #if defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
 bool ComputeFrustumVisibility(float3 position, float radius)
 {
-	bool visible = false;
+	bool visible = true;
 #ifdef USE_FRUSTUM_SPHERE_CULLING
 
-	bool sphereVisibility = VisibleFrustumSphere(position, radius, camera.frustum.boundingSphere);
-
-	if (sphereVisibility)
-		visible = true;
+	const bool sphereVisibility = VisibleFrustumSphere(position, radius, camera.frustum.boundingSphere);
+	visible &= sphereVisibility;
 #endif // USE_FRUSTUM_SPHERE_CULLING
-
 #ifdef USE_FRUSTUM_CONE_CULLING
-	bool coneVisibility = VisibleFrustumCone(position, radius, camera.frustum.cone);
-
-	if (coneVisibility)
-		visible = true;
+	const bool coneVisibility = VisibleFrustumCone(position, radius, camera.frustum.cone);
+	visible &= coneVisibility;
 #endif // USE_FRUSTUM_CONE_CULLING
 
 #ifdef USE_FRUSTUM_SINGLE_PLANE_CULLING
-	bool planeVisbility = VisibleFrustumPlane(position, radius, camera.frustum.planes[USE_FRUSTUM_SINGLE_PLANE_CULLING], true);
-
-	if (planeVisbility)
-		visible = true;
+	const bool planeVisbility = VisibleFrustumPlane(position, radius, camera.frustum.planes[USE_FRUSTUM_SINGLE_PLANE_CULLING], true);
+	visible &= planeVisbility;
 #endif // USE_FRUSTUM_SINGLE_PLANE_CULLING
 
 #ifdef USE_FRUSTUM_ALL_PLANES_CULLING
-	bool allPlanesVisibility = VisibleFrustumPlanes(position, radius, camera.frustum.planes, false);
-
-	if (allPlanesVisibility)
-		visible = true;
-
+	const bool allPlanesVisibility = VisibleFrustumPlanes(position, radius, camera.frustum.planes, false);
+	visible &= allPlanesVisibility;
 #endif // USE_FRUSTUM_ALL_PLANES_CULLING
 	return visible;
 }
-#endif
+#endif // USE_AMPLIFICATIONSHADER && USE_CULLING
 
 [numthreads(AS_GROUP_SIZE, 1, 1)]
 void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint gid : SV_GroupID)
