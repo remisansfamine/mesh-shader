@@ -3375,7 +3375,7 @@ int main()
 					sceneUBO.camera.view = cameraTransform;
 					sceneUBO.camera.invViewProj = viewProjection;
 
-#ifdef USE_CULLING
+#if defined(USE_MESHSHADER) && defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
 					const SA::Vec3f viewDirection = cameraTr.Forward().GetNormalized();
 
 					FrustumPlane planeLeft, planeRight, planeTop, planeBottom, planeNear, planeFar;
@@ -3402,7 +3402,7 @@ int main()
 
 					SA_LOG(frustumBoundingSphereCenter);
 					sceneUBO.camera.frustum.boundingSphere = SA::Vec4f(frustumBoundingSphereCenter, frustumBoundingSphereRadius);
-#endif
+#endif // USE_MESHSHADER && USE_AMPLIFICATION_SHADER && USE_CULLING
 
 #ifdef USE_MESHSHADER
 					sceneUBO.meshletCount = static_cast<uint32_t>(meshletCount);

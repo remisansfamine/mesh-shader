@@ -165,7 +165,7 @@ bool VisibleFrustumPlanes(float3 position, float radius, FrustumPlane frustumPla
 	return insideFrustumPlanes;
 }
 
-#ifdef USE_CULLING
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
 bool ComputeFrustumVisibility(float3 position, float radius)
 {
 	bool visible = false;
@@ -215,19 +215,19 @@ void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint 
 	const bool instanceValid = instanceIndex < instanceCount;
 
 	const bool valid = meshletValid && instanceValid;
-#else
+#else // USE_INSTANCING
 	const bool valid = meshletValid;
-#endif
+#endif // USE_INSTANCING
 
-#ifdef USE_CULLING
+#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_CULLING)
 	bool visible = false;
 	if (valid)
 	{
-#if defined(USE_AMPLIFICATIONSHADER) && defined(USE_INSTANCING)
+#if defined(USE_INSTANCING)
 		Object currentObject = objects[instanceIndex];
-#else
+#else // USE_INSTANCING
 		Object currentObject = object;
-#endif
+#endif // USE_INSTANCING
 		const float4x4 transform = currentObject.transform;
 		const float3 meshletBoundingSpherePosition = mul(transform, float4(meshletBounds[meshletIndex].xyz, 1.0)).xyz;
 		const float meshletBoundingSphereRadius = meshletBounds[meshletIndex].w;
@@ -235,9 +235,9 @@ void mainAS(uint gtid : SV_GroupThreadID, uint dtid : SV_DispatchThreadID, uint 
 		visible = ComputeFrustumVisibility(meshletBoundingSpherePosition, meshletBoundingSphereRadius);
 	}
 
-#else
+#else // USE_AMPLIFICATIONSHADER
 	bool visible = valid;
-#endif
+#endif // USE_AMPLIFICATIONSHADER
 
 	if (visible)
 	{
